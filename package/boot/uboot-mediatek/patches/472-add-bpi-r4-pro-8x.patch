@@ -1,6 +1,6 @@
 --- /dev/null
 +++ b/configs/mt7988a_bananapi_bpi-r4-pro-8x-emmc_defconfig
-@@ -0,0 +1,152 @@
+@@ -0,0 +1,155 @@
 +CONFIG_ARM=y
 +CONFIG_ARM_SMCCC=y
 +CONFIG_SYS_HAS_NONCACHED_MEMORY=y
@@ -124,7 +124,10 @@
 +CONFIG_MTD_UBI_FASTMAP=y
 +CONFIG_PHY_FIXED=y
 +CONFIG_MEDIATEK_ETH=y
-+CONFIG_PCIE_MEDIATEK=y
++CONFIG_PCIE_MEDIATEK_GEN3=y
++CONFIG_NVME_PCI=y
++CONFIG_CMD_NVME=y
++CONFIG_BLK=y
 +CONFIG_PHY=y
 +CONFIG_PHY_MTK_TPHY=y
 +CONFIG_PINCTRL=y
@@ -155,7 +158,7 @@
 +CONFIG_HEXDUMP=y
 --- /dev/null
 +++ b/configs/mt7988a_bananapi_bpi-r4-pro-8x-sdmmc_defconfig
-@@ -0,0 +1,153 @@
+@@ -0,0 +1,156 @@
 +CONFIG_ARM=y
 +CONFIG_ARM_SMCCC=y
 +CONFIG_SYS_HAS_NONCACHED_MEMORY=y
@@ -280,7 +283,10 @@
 +CONFIG_MTD_UBI_FASTMAP=y
 +CONFIG_PHY_FIXED=y
 +CONFIG_MEDIATEK_ETH=y
-+CONFIG_PCIE_MEDIATEK=y
++CONFIG_PCIE_MEDIATEK_GEN3=y
++CONFIG_NVME_PCI=y
++CONFIG_CMD_NVME=y
++CONFIG_BLK=y
 +CONFIG_PHY=y
 +CONFIG_PHY_MTK_TPHY=y
 +CONFIG_PINCTRL=y
@@ -311,7 +317,7 @@
 +CONFIG_HEXDUMP=y
 --- /dev/null
 +++ b/configs/mt7988a_bananapi_bpi-r4-pro-8x-snand_defconfig
-@@ -0,0 +1,152 @@
+@@ -0,0 +1,155 @@
 +CONFIG_ARM=y
 +CONFIG_ARM_SMCCC=y
 +CONFIG_SYS_HAS_NONCACHED_MEMORY=y
@@ -435,7 +441,10 @@
 +CONFIG_MTD_UBI_FASTMAP=y
 +CONFIG_PHY_FIXED=y
 +CONFIG_MEDIATEK_ETH=y
-+CONFIG_PCIE_MEDIATEK=y
++CONFIG_PCIE_MEDIATEK_GEN3=y
++CONFIG_NVME_PCI=y
++CONFIG_CMD_NVME=y
++CONFIG_BLK=y
 +CONFIG_PHY=y
 +CONFIG_PHY_MTK_TPHY=y
 +CONFIG_PINCTRL=y
@@ -474,7 +483,7 @@
 +bootcmd=if pstore check ; then run boot_recovery ; else run boot_emmc ; fi
 +bootconf=config-mt7988a-bananapi-bpi-r4-pro-8x
 +bootconf_emmc=mt7988a-bananapi-bpi-r4-pro-emmc
-+bootconf_extra=mt7988a-bananapi-bpi-r4-pro-cn13#mt7988a-bananapi-bpi-r4-pro-cn14
++bootconf_extra=mt7988a-bananapi-bpi-r4-pro-cn13#mt7988a-bananapi-bpi-r4-pro-cn14#mt7988a-bananapi-bpi-r4-pro-8x-lan-sfp#mt7988a-bananapi-bpi-r4-pro-8x-wan-sfp
 +bootdelay=0
 +bootfile=openwrt-mediatek-filogic-bananapi_bpi-r4-pro-8x-initramfs-recovery.itb
 +bootfile_bl2=openwrt-mediatek-filogic-bananapi_bpi-r4-pro-8x-emmc-preloader.bin
@@ -533,7 +542,7 @@
 +bootcmd=if pstore check ; then run boot_recovery ; else run boot_sdmmc ; fi
 +bootconf=config-mt7988a-bananapi-bpi-r4-pro-8x
 +bootconf_sd=mt7988a-bananapi-bpi-r4-pro-sd
-+bootconf_extra=mt7988a-bananapi-bpi-r4-pro-cn13#mt7988a-bananapi-bpi-r4-pro-cn14
++bootconf_extra=mt7988a-bananapi-bpi-r4-pro-cn13#mt7988a-bananapi-bpi-r4-pro-cn14#mt7988a-bananapi-bpi-r4-pro-8x-lan-sfp#mt7988a-bananapi-bpi-r4-pro-8x-wan-sfp
 +bootdelay=0
 +bootfile=openwrt-mediatek-filogic-bananapi_bpi-r4-pro-8x-initramfs-recovery.itb
 +bootfile_upg=openwrt-mediatek-filogic-bananapi_bpi-r4-pro-8x-squashfs-sysupgrade.itb
@@ -600,7 +609,7 @@
 +bootargs=console=ttyS0,115200n1 pci=pcie_bus_perf root=/dev/fit0 rootwait ubi.block=0,fit
 +bootconf=config-mt7988a-bananapi-bpi-r4-pro-8x
 +bootconf_emmc=mt7988a-bananapi-bpi-r4-pro-emmc
-+bootconf_extra=mt7988a-bananapi-bpi-r4-pro-cn13#mt7988a-bananapi-bpi-r4-pro-cn14
++bootconf_extra=mt7988a-bananapi-bpi-r4-pro-cn13#mt7988a-bananapi-bpi-r4-pro-cn14#mt7988a-bananapi-bpi-r4-pro-8x-lan-sfp#mt7988a-bananapi-bpi-r4-pro-8x-wan-sfp
 +bootcmd=if pstore check ; then run boot_recovery ; else run boot_ubi ; fi
 +bootdelay=0
 +bootfile=openwrt-mediatek-filogic-bananapi_bpi-r4-pro-8x-initramfs-recovery.itb
@@ -710,7 +719,7 @@
 +};
 --- /dev/null
 +++ b/arch/arm/dts/mt7988a-bananapi-bpi-r4-pro-8x.dtsi
-@@ -0,0 +1,241 @@
+@@ -0,0 +1,267 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Copyright (c) 2022 MediaTek Inc.
@@ -850,6 +859,20 @@
 +		};
 +	};
 +
++	/* 1L0 0=key-b (CN15), 1=key-m (CN13) */
++	/*pcie-2-hog {
++		gpio-hog;
++		gpios = <79 GPIO_ACTIVE_HIGH>;
++		output-high;
++	};*/
++
++	/* 1L1 0=key-b (CN18), 1=key-m (CN14) */
++	pcie-3-hog {
++		gpio-hog;
++		gpios = <63 GPIO_ACTIVE_HIGH>;
++		output-high;
++	};
++
 +	pwm_pins: pwm-pins {
 +		mux {
 +			function = "pwm";
@@ -951,4 +974,16 @@
 +		};
 +
 +	};
++};
++
++&pcie0 {
++	status = "okay";
++};
++
++&pcie1 {
++	status = "okay";
++};
++
++&pcie3 {
++	status = "okay";
 +};
