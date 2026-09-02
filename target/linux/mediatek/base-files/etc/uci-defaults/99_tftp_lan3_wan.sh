@@ -23,8 +23,8 @@ mount | grep -qE " on / type tmpfs" || exit 0
 # Verify the expected fallback port exists before reconfiguring
 [ -e /sys/class/net/lan3 ] || exit 0
 
-# Remove default wan (10G combo) config, set WAN on the lan3 2.5G port,
-# and rebuild the LAN bridge from the remaining ports.
+# Remove the default wan (10G combo) configs, set WAN on the lan3 2.5G
+# port, pin the LAN bridge to 10.222.1.2 and rebuild its port list.
 uci -q batch <<-EOF
 	delete network.wan
 	delete network.wan6
@@ -34,6 +34,8 @@ uci -q batch <<-EOF
 	set network.wan6=interface
 	set network.wan6.device='lan3'
 	set network.wan6.proto='dhcpv6'
+	set network.lan.ipaddr='10.222.1.2'
+	set network.lan.netmask='255.255.255.0'
 	commit network
 EOF
 
