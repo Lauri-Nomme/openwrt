@@ -28,6 +28,7 @@ What this branch **still changes** vs main (the minimal, intentional deltas):
 | Combo-port default | **Copper RJ45** (`lan-phy`/`wan-phy`) | SFP (`lan-sfp`/`wan-sfp`) |
 | U-Boot PCIe | `PCIE_MEDIATEK_GEN3` | `PCIE_MEDIATEK` |
 | U-Boot NVMe | `NVME_PCI` + `CMD_NVME` + `BLK` | not enabled |
+| gmac1 (WAN combo) name | **`eth1`** (drop upstream `wan` rename) | `wan` |
 
 everything else (as21xxx, MxL driver, packaging) is taken verbatim from
 upstream main. See `git log bpi-r4pro-8x-v2 --not upstream/main` for the
