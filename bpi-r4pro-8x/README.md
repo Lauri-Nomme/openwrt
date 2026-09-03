@@ -263,3 +263,33 @@ The 1.0.85 fix was confirmed live with a cable in the combo LAN copper port
   SFP/copper switching still requires the overlay approach.
 - Watch: Maxime Chevallier's netdev series + any mediatek as21xxx backports
   in upstream OpenWrt; once they land, this deviation can shrink further.
+
+## Config snapshot / restore
+
+The BananaPi's working configuration (stock-derived, migrated to this fork) is
+saved as plain `/etc/config/*` text files on changwang at:
+
+```
+~/dev/openwrt-bpi-r4pro-8x/config/v1-restore/
+    network wireless system dhcp firewall collectd restore.sh
+```
+
+(also mirrored to `/data/tftp/repair/v1-config/` and the repo `backups/`).
+
+Settings carried: LAN `br-lan 10.222.1.2/24` (lan1..6), **WAN = `eth1`** (10G
+combo copper, DHCP, hostname `hellohi`), route `10.222.20.0/24` via
+`10.222.1.1`, hostname `banana`, dnsmasq LAN server, 4 DNAT port-forwards to
+changwang (`10.222.1.1`: 7777, 22222→22, 65534→80, 22→22), WiFi `banaiot`
+(2g ch7) + `banana5ax` (5g ch48 EHT80), collectd → `10.222.1.1:25826`.
+
+Restore onto any freshly-flashed system:
+
+```sh
+~/dev/openwrt-bpi-r4pro-8x/config/v1-restore/restore.sh [10.222.1.2]
+```
+
+**Interface-name notes (v1 → v2):**
+- WAN combo stays **`eth1`** (the v2 branch deliberately drops upstream's
+  `gmac1 → wan` rename so stock/v1 configs keep working).
+- WiFi moved from per-phy `radio0/1/2` to **single `phy0` with `radio=` 0/1/2**
+  (2g/5g/6g) index options — the saved `wireless` config uses the v2 format.
