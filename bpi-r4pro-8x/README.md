@@ -335,3 +335,30 @@ for q in /sys/class/net/eth[12]/queues/rx-*/rps_cpus; do echo f > $q; done   # R
   interference; 5G stays ch48 — max legal power, no neighbours).
 - `br_netfilter` module present but unused (`bridge-nf-* = 0`) — safe to drop
   if building images from scratch.
+
+## Upstream watchlist (open PRs / frank-w branches)
+
+Not yet adopted, tracked here for when they land/mature:
+
+- **OpenWrt #24990** — `as21xxx: add hwmon temperature support`. Exposes the
+  AS21xxx PHY on-chip temp via `sensors` (temp1_input); **tested on BPI-R4 Pro**
+  with both AS21010JB1 PHYs at firmware 1.9.1 (our exact hardware/fw). Would
+  give MxL-side PHY temps without extra drivers. Not merged yet — do not take.
+- **OpenWrt #24073** — `BPI-R4 I2C1 overlay` (adds the GPIO-header I2C1 for
+  INA219/SHT31 sensors via `bootconf_extra`). Useful if sensors are added.
+- **OpenWrt #24800** — kernel `6.18.44 → 6.18.49` (three 6.18 bumps) — apply
+  when merging upstream/main into v2.
+- **OpenWrt #24687 (watch)** — MT7988 PPE HW-offload is slower + IDQMA shaping
+  proposal. If adaptive QDMA shaping lands upstream, hardware offload may
+  become worthwhile; revisit then.
+- **frank-w branches**: `R4Pro_PR10` (Aug 30, latest as21xxx + 970),
+  `R4Pro_4e` (Sep 2, 4E support). Both are en route to upstream main, which is
+  already our v2 base — so v2 is ahead for the 8X; only changes that hit upstream main
+  get adopted on rebase.
+
+## UPnP (`miniupnpd`)
+
+Enabled on the Banana: `upnpd.config.enabled '1'` (was `0`). Bound
+`ext_ifname=eth1` (WAN), `listening_ip=br-lan`, port 5000 (UPnP IGD + NAT-PMP).
+Config saved in the restore kit as `config/v1-restore/upnpd`. `secure_mode 1`,
+perm rules allow ext ports 1024-65535 → LAN, default-deny.
