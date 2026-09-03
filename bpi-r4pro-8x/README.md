@@ -293,3 +293,45 @@ Restore onto any freshly-flashed system:
   `gmac1 → wan` rename so stock/v1 configs keep working).
 - WiFi moved from per-phy `radio0/1/2` to **single `phy0` with `radio=` 0/1/2**
   (2g/5g/6g) index options — the saved `wireless` config uses the v2 format.
+
+## Performance tuning (applied + persisted 2026-09-03)
+
+Applied to the live Banana and persisted via `/etc/rc.local` (also saved as
+`config/v1-restore/rc.local.perf` and the repo `config-restore/`):
+
+```sh
+for c in /sys/devices/system/cpu/cpu[0-3]/cpufreq/scaling_governor; do echo schedutil > $c; done
+echo 3 > /proc/irq/104/smp_affinity        # 15100000.ethernet rx status irq -> cpus 0-1
+echo c > /proc/irq/105/smp_affinity        # ... -> cpus 2-3
+for q in /sys/class/net/eth[12]/queues/rx-*/rps_cpus; do echo f > $q; done   # RPS all 4 cpus
+```
+
+### Software flow offload (`firewall @defaults { flow_offloading '1' }`)
+- nftables flowtable on `{ br-lan, eth1 }`; accelerates **WAN NAT routing**
+  (lan↔internet, incl. the DNAT port-forwards to changwang). Not applied to
+  bridged LAN traffic or host-local traffic.
+- **Verified clean** on this board: `ssh git@github.com` connects, and two
+  35 MB downloads through the NAT produced **identical sha256** (no TCP
+  truncation/reordering).
+
+### Known MT7988A (BPi-R4 Pro) performance reality
+- **SW flowtable is the right choice here.** Do **NOT** enable
+  `flow_offloading_hw` (PPE):
+  - GitHub openwrt #24687: MT7988 PPE HW offload *drops* throughput (burst
+    congestion, ~1300 vs 1500-1800 Mbps for pure sw), and QDMA MAX_RATE is
+    skipped for MT7988.
+  - Forum #27340: the stock BPI `/etc/flowtable.conf` (hw offload w/ flowtable
+    on the MxL ports) **corrupts large TCP segments** (SSH resets, 224-byte
+    gaps) on the R4 Pro 8X. Our mainline fw4 does not ship that file.
+- **Bridged LAN forwarding ceiling ~1.6-1.7 Gbit**: identical with 1/4/16
+  iperf streams, CPUs at 1.8 GHz — a platform/DSA-path limit, not CPU or IRQ
+  bound. Forum #23414: multi-10G bridged needs the `bridger` package (L2 only,
+  not NAT routing).
+- **WAN is 1G-bound** (ISP), so offload frees router CPU but can't exceed the
+  uplink.
+
+### Misc
+- WiFi channel survey (2026-09-03): 2.4G moved **ch7 → ch1** (least
+  interference; 5G stays ch48 — max legal power, no neighbours).
+- `br_netfilter` module present but unused (`bridge-nf-* = 0`) — safe to drop
+  if building images from scratch.
