@@ -270,7 +270,7 @@ The BananaPi's working configuration (stock-derived, migrated to this fork) is
 saved as plain `/etc/config/*` text files on changwang at:
 
 ```
-~/dev/openwrt-bpi-r4pro-8x/config/v1-restore/
+~/dev/openwrt-bpi-r4pro-8x/backups/config-restore/
     network wireless system dhcp firewall collectd restore.sh
 ```
 
@@ -285,7 +285,7 @@ changwang (`10.222.1.1`: 7777, 22222→22, 65534→80, 22→22), WiFi `banaiot`
 Restore onto any freshly-flashed system:
 
 ```sh
-~/dev/openwrt-bpi-r4pro-8x/config/v1-restore/restore.sh [10.222.1.2]
+~/dev/openwrt-bpi-r4pro-8x/backups/config-restore/restore.sh [10.222.1.2]
 ```
 
 **Interface-name notes (v1 → v2):**
@@ -297,7 +297,7 @@ Restore onto any freshly-flashed system:
 ## Performance tuning (applied + persisted 2026-09-03)
 
 Applied to the live Banana and persisted via `/etc/rc.local` (also saved as
-`config/v1-restore/rc.local.perf` and the repo `config-restore/`):
+`backups/config-restore/rc.local.perf`):
 
 ```sh
 for c in /sys/devices/system/cpu/cpu[0-3]/cpufreq/scaling_governor; do echo schedutil > $c; done
@@ -360,5 +360,5 @@ Not yet adopted, tracked here for when they land/mature:
 
 Enabled on the Banana: `upnpd.config.enabled '1'` (was `0`). Bound
 `ext_ifname=eth1` (WAN), `listening_ip=br-lan`, port 5000 (UPnP IGD + NAT-PMP).
-Config saved in the restore kit as `config/v1-restore/upnpd`. `secure_mode 1`,
+Config saved in the restore kit as `backups/config-restore/upnpd`. `secure_mode 1`,
 perm rules allow ext ports 1024-65535 → LAN, default-deny.
