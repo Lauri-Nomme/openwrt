@@ -1,0 +1,42 @@
+From: Lauri Nomme <lauri.nomme@gmail.com>
+Date: Fri, 04 Sep 2026 13:20:00 +0300
+Subject: [PATCH] arm64: dts: mediatek: mt7988a-bpi-r4-pro: 5V fan on a 12V rail
+
+The BPI-R4 Pro pwm-fan is assumed to be a 12V fan, so its cooling-levels
+run up to 255 (100% duty = 12V across the fan). This board actually has a
+5V fan fitted, driven from the 12V rail. PWM duty is linear in applied
+voltage: V_eff = duty/255 * 12V, so delivering 5V at 100% requires
+capping duty at 255 * 5/12 = 106. Driving a 5V fan above that would
+eventually overvolt it.
+
+Recalibrate the cooling curve to the 5V fan:
+
+  cooling level (0,1,2,3): (0, 1.9V, 2.5V, 5.0V)
+
+  level 0 = off
+  level 1 = PWM 40  (quiescent, ~1.9V - enough to spin a 5V fan quietly)
+  level 2 = PWM 53  (2.5V)             [was PWM 128]
+  level 3 = PWM 106 (=5V, max safe)    [was PWM 255 -> 12V!]
+
+Safe ceiling never exceeds 5V across the fan.
+
+Signed-off-by: Lauri Nomme <lauri.nomme@gmail.com>
+---
+ arch/arm64/boot/dts/mediatek/mt7988a-bananapi-bpi-r4-pro.dtsi | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/arch/arm64/boot/dts/mediatek/mt7988a-bananapi-bpi-r4-pro.dtsi b/arch/arm64/boot/dts/mediatek/mt7988a-bananapi-bpi-r4-pro.dtsi
+--- a/arch/arm64/boot/dts/mediatek/mt7988a-bananapi-bpi-r4-pro.dtsi
++++ b/arch/arm64/boot/dts/mediatek/mt7988a-bananapi-bpi-r4-pro.dtsi
+@@ -35,4 +35,4 @@
+ 	fan: pwm-fan {
+ 		compatible = "pwm-fan";
+-		/* cooling level (0, 1, 2, 3) : (0% duty, 30% duty, 50% duty, 100% duty) */
+-		cooling-levels = <0 80 128 255>;
++		/* 5V fan on 12V rail: level (0,1,2,3) -> (off, 1.9V, 2.5V, 5V) */
++		cooling-levels = <0 40 53 106>;
+ 		pinctrl-0 = <&pwm0_pins>;
+ 		pinctrl-names = "default";
+ 		pwms = <&pwm 0 50000>;
+ 		#cooling-cells = <2>;
+ 	};
