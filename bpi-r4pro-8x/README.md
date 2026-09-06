@@ -362,3 +362,30 @@ Enabled on the Banana: `upnpd.config.enabled '1'` (was `0`). Bound
 `ext_ifname=eth1` (WAN), `listening_ip=br-lan`, port 5000 (UPnP IGD + NAT-PMP).
 Config saved in the restore kit as `backups/config-restore/upnpd`. `secure_mode 1`,
 perm rules allow ext ports 1024-65535 → LAN, default-deny.
+
+## Fan (`pwm-fan`) — 5V fan on a 12V rail, no tach
+
+The Banana drives its fans through the kernel `pwm-fan` (hwmon1, `pwm1`
+0-255 = 0%..100% duty). This board actually has **5V** Noctua fans fitted,
+but they are driven from the **12V** rail, so:
+
+- `V_eff = pwm1/255 * 12V` — to keep a 5V fan ≤ 5V, cap duty at
+  `255 * 5/12 = 106`.
+- Fork DTS patch `050-...5v-fan-on-12v-rail.patch` recalibrates
+  `cooling-levels = <0 60 83 106>` (≈ 2.8V / 3.9V / 5.0V) so even the
+  hottest cooling state never overvolts the fan. Idle state sits at
+  PWM 60 (≈ 2.8V), measured to hold CPU at ~47-48 °C.
+- **Tach is not wired on this board.** The fan header exposes only
+  VCC/GND/PWM (confirmed by frank-w and the lack of any `fan*` node in
+  sysfs); the kernel `pwm-fan` tach support can't be used, so `fan1_input`
+  (RPM) is not available and never will be without hardware mods. Monitor
+  **fan PWM duty** instead.
+- **Fan PWM → collectd** requires the `collectd-mod-exec` plugin
+  (`config.seed` enables it). The box-side script
+  `/usr/lib/collectd/pwmfan.sh` emits a `banana/fan-pwm` gauge; once that
+  module is in the image the PWM trend lands in changwang's
+  `rrd/banana/`.
+- Keep-alive: `rc.local` pins the fan to PWM 60 on boot (`backups/config-restore/rc.local.perf`).
+- Caveat: BPI forum #26769 documents a potential **12V fan-rail fault**
+  on some R4 Pro boards (dim LEDs / weak spin). Watch for that on top of
+  the 5V-vs-12V mismatch.

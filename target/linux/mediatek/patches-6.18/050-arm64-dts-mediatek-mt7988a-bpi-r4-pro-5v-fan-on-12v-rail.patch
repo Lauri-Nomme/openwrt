@@ -11,11 +11,11 @@ eventually overvolt it.
 
 Recalibrate the cooling curve to the 5V fan:
 
-  cooling level (0,1,2,3): (0, 1.9V, 2.5V, 5.0V)
+  cooling level (0,1,2,3): (0, 2.8V, 3.9V, 5.0V)
 
   level 0 = off
-  level 1 = PWM 40  (quiescent, ~1.9V - enough to spin a 5V fan quietly)
-  level 2 = PWM 53  (2.5V)             [was PWM 128]
+  level 1 = PWM 60  (quiescent, ~2.8V - keeps the SBC near 47-48C idle)
+  level 2 = PWM 83  (3.9V)
   level 3 = PWM 106 (=5V, max safe)    [was PWM 255 -> 12V!]
 
 Safe ceiling never exceeds 5V across the fan.
@@ -33,8 +33,8 @@ Signed-off-by: Lauri Nomme <lauri.nomme@gmail.com>
  		compatible = "pwm-fan";
 -		/* cooling level (0, 1, 2, 3) : (0% duty, 30% duty, 50% duty, 100% duty) */
 -		cooling-levels = <0 80 128 255>;
-+		/* 5V fan on 12V rail: level (0,1,2,3) -> (off, 1.9V, 2.5V, 5V) */
-+		cooling-levels = <0 40 53 106>;
++		/* 5V fan on 12V rail: level (0,1,2,3) -> (off, 2.8V, 3.9V, 5V) */
++		cooling-levels = <0 60 83 106>;
  		pinctrl-0 = <&pwm0_pins>;
  		pinctrl-names = "default";
  		pwms = <&pwm 0 50000>;
