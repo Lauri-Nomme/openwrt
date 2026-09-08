@@ -356,6 +356,14 @@ Not yet adopted, tracked here for when they land/mature:
   already our v2 base — so v2 is ahead for the 8X; only changes that hit upstream main
   get adopted on rebase.
 
+### Explicitly skipped
+
+- **openwrt/packages #30470** — `fwupd: backport upstream support for
+  MxL862xx switches` (flash switch firmware via `fwupdmgr update` / LVFS).
+  **Skip:** the switch is already on 1.0.85 via the working manual
+  `devlink dev flash` path; adding the whole fwupd daemon + LVFS stack to
+  the router isn't worth it for a one-time op.
+
 ## UPnP (`miniupnpd`)
 
 Enabled on the Banana: `upnpd.config.enabled '1'` (was `0`). Bound
