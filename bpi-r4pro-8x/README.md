@@ -155,6 +155,21 @@ other stock blobs bl2/fip/fit) and `/data/tftp/repair/`. Checksum file:
 `backups/mxl86252-fw-1.0.85.sha256`. (Backups live outside the inner
 `openwrt/` git checkout, alongside the project's top-level files.)
 
+**LVFS/DSA variant (also archived):** MaxLinear now publishes signed firmware
+on **LVFS/fwupd** (`com.maxlinear.mxl862xx.firmware`,
+`fwupd.org/lvfs/devices/com.maxlinear.mxl862xx.firmware`). The current
+release is the **DSA-specific build**
+`mxl862xxc_1030_1085_1085_0069_signed_upgrade_dsa_v2.bin`
+(sha256 `6d275ac70fbf6bcf24f0970d443aca8faf68d429cf478fb45f50d83567d6a98e`,
+2,019,348 bytes, LVFS-signed 2026-08-26) — archived as
+`backups/mxl86252-fw-1.0.85-dsa-v2-lvfs.bin`. Release notes: "added support
+for the MxL86253; added SerDes (host) API support for DSA driver". It is a
+**different binary** from the `_xfi_upgrade_fca` flashed above (different
+payload size + sha). frank-w noted the dsa variant is the one needed for the
+mainline driver; we are on the xfi build which works, but this dsa_v2 (or a
+newer LVFS build) is the formally-recommended DSA firmware to consider
+flashing when next updating.
+
 Format (verified against `mxl862xx_flash_validate()`):
 - 20-byte MCUboot header: `image_type 0xf48af48a`, one image slot of
   2,052,096 bytes, `size2 = 0`
@@ -355,6 +370,15 @@ Not yet adopted, tracked here for when they land/mature:
   `R4Pro_4e` (Sep 2, 4E support). Both are en route to upstream main, which is
   already our v2 base — so v2 is ahead for the 8X; only changes that hit upstream main
   get adopted on rebase.
+- **RSS/LRO for mtk_eth_soc (HIGH VALUE)** — frank-w submitted RSS/LRO
+  support to netdev (RFC, patchwork), commits in `frank-w/BPI-Router-Linux`
+  `6.18-main` (Dec 2025: `[RSS/LRO coverletter] Add RSS and LRO support`,
+  `net: ethernet: mtk_eth_soc: Add register definitions for RSS and LRO`, ...).
+  This directly fixes the **~1.6 Gbit bridged/local-routing CPU ceiling** on the
+  MT7988: a forum user reported **4.5 → 8.4 Gbit/s with RSS enabled** (LRO
+  still WIP, known to break on mt7988 in current form). Frank-w's patches live
+  in `6.18-main`/LTS branches. **When RSS/LRO land in OpenWrt main, rebase +
+  adopt** → expect the lan6/R4 Pro routing to break past 1.6 Gbit.
 
 ### Explicitly skipped
 
