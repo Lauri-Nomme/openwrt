@@ -2,8 +2,13 @@ From: Lauri Nomme <lauri.nomme@gmail.com>
 Date: Sat, 12 Sep 2026 03:00:00 +0300
 Subject: [PATCH] net: ethernet: mtk_eth_soc: add RSS (Receive Side Scaling) for MT7988
 
-Combined register-definitions + RSS support retrofit onto the 6.18.44
-single-NAPI model. Adds a static Toeplitz hash key and 128-entry
+Source: based on Mason Chang <mason-cw.chang@mediatek.com>'s upstream RSS
+series (netdev RFC / patchwork, commit d319bc5653 "net: ethernet:
+mtk_eth_soc: Add RSS support", 2025-03-19 plus its register-definitions
+companion f7157855), as carried downstream in frank-w/BPI-Router-Linux
+branch 6.18-main (openwrt R4Pro_PR9).
+
+Retrofitted onto the 6.18.44 single-NAPI model. Adds a static Toeplitz hash key and 128-entry
 indirection table, plus ethtool rxfh hooks:
 
   ethtool -x <iface>
