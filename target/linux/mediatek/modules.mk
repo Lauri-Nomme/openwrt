@@ -56,3 +56,22 @@ define KernelPackage/phy-mediatek-2p5g/description
 endef
 
 $(eval $(call KernelPackage,phy-mediatek-2p5g))
+
+define KernelPackage/net-mediatek
+  SUBMENU:=Network Devices
+  TITLE:=MediaTek SoC Gigabit Ethernet support
+  DEPENDS:=@TARGET_mediatek_filogic
+  KCONFIG:=CONFIG_NET_MEDIATEK_SOC
+  FILES:= \
+	$(LINUX_DIR)/drivers/net/ethernet/mediatek/mtk_eth.ko \
+	$(LINUX_DIR)/drivers/net/ethernet/mediatek/mtk_wed_ops.ko
+  AUTOLOAD:=$(call AutoProbe,mtk_eth)
+endef
+
+define KernelPackage/net-mediatek/description
+  MediaTek SoC Gigabit Ethernet driver (MT7988 et al.) plus WED offload ops.
+  Built as a module so a known-good copy can be swapped to recover a
+  failed RSS driver without reflashing.
+endef
+
+$(eval $(call KernelPackage,net-mediatek))
