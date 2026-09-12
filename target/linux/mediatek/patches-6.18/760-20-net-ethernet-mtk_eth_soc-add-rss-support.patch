@@ -14,7 +14,6 @@ target are untouched. Omitted the per-RX-ring IRQ-group programming the
 upstream patch carries (multi-ring NAPI not present in 6.18.44 upstream).
 
 Signed-off-by: Lauri Nomme <lauri.nomme@gmail.com>
-diff --git a/drivers/net/ethernet/mediatek/mtk_eth_soc.c b/drivers/net/ethernet/mediatek/mtk_eth_soc.c
 --- a/drivers/net/ethernet/mediatek/mtk_eth_soc.c
 +++ b/drivers/net/ethernet/mediatek/mtk_eth_soc.c
 @@ -38,6 +38,13 @@
@@ -31,7 +30,7 @@ diff --git a/drivers/net/ethernet/mediatek/mtk_eth_soc.c b/drivers/net/ethernet/
  static int mtk_msg_level = -1;
  module_param_named(msg_level, mtk_msg_level, int, 0);
  MODULE_PARM_DESC(msg_level, "Message level (-1=defaults,0=none,...,16=all)");
-@@ -61,13 +68,18 @@ static const struct mtk_reg_map mtk_reg_map = {
+@@ -61,13 +68,18 @@ static const struct mtk_reg_map mtk_reg_
  		.rx_ptr		= 0x0900,
  		.rx_cnt_cfg	= 0x0904,
  		.pcrx_ptr	= 0x0908,
@@ -50,7 +49,7 @@ diff --git a/drivers/net/ethernet/mediatek/mtk_eth_soc.c b/drivers/net/ethernet/
  	},
  	.qdma = {
  		.qtx_cfg	= 0x1800,
-@@ -125,6 +137,7 @@ static const struct mtk_reg_map mt7986_reg_map = {
+@@ -125,6 +137,7 @@ static const struct mtk_reg_map mt7986_r
  	.tx_irq_mask		= 0x461c,
  	.tx_irq_status		= 0x4618,
  	.pdma = {
@@ -58,7 +57,7 @@ diff --git a/drivers/net/ethernet/mediatek/mtk_eth_soc.c b/drivers/net/ethernet/
  		.rx_ptr		= 0x4100,
  		.rx_cnt_cfg	= 0x4104,
  		.pcrx_ptr	= 0x4108,
-@@ -135,6 +148,12 @@ static const struct mtk_reg_map mt7986_reg_map = {
+@@ -135,6 +148,12 @@ static const struct mtk_reg_map mt7986_r
  		.irq_mask	= 0x4228,
  		.adma_rx_dbg0	= 0x4238,
  		.int_grp	= 0x4250,
@@ -71,7 +70,7 @@ diff --git a/drivers/net/ethernet/mediatek/mtk_eth_soc.c b/drivers/net/ethernet/
  	},
  	.qdma = {
  		.qtx_cfg	= 0x4400,
-@@ -183,10 +202,21 @@ static const struct mtk_reg_map mt7988_reg_map = {
+@@ -183,10 +202,21 @@ static const struct mtk_reg_map mt7988_r
  		.glo_cfg	= 0x6a04,
  		.rst_idx	= 0x6a08,
  		.delay_irq	= 0x6a0c,
@@ -93,7 +92,7 @@ diff --git a/drivers/net/ethernet/mediatek/mtk_eth_soc.c b/drivers/net/ethernet/
  	},
  	.qdma = {
  		.qtx_cfg	= 0x4400,
-@@ -3531,6 +3561,10 @@ static int mtk_dma_init(struct mtk_eth *eth)
+@@ -3531,6 +3561,10 @@ static int mtk_dma_init(struct mtk_eth *
  			return err;
  	}
  
@@ -104,7 +103,7 @@ diff --git a/drivers/net/ethernet/mediatek/mtk_eth_soc.c b/drivers/net/ethernet/
  	if (MTK_HAS_CAPS(eth->soc->caps, MTK_QDMA)) {
  		/* Enable random early drop and set drop threshold
  		 * automatically
-@@ -3577,6 +3611,8 @@ static void mtk_dma_free(struct mtk_eth *eth)
+@@ -3577,6 +3611,8 @@ static void mtk_dma_free(struct mtk_eth
  			mtk_rx_clean(eth, &eth->rx_ring[i], false);
  	}
  
@@ -113,7 +112,7 @@ diff --git a/drivers/net/ethernet/mediatek/mtk_eth_soc.c b/drivers/net/ethernet/
  	for (i = 0; i < DIV_ROUND_UP(soc->tx.fq_dma_size, MTK_FQ_DMA_LENGTH); i++) {
  		kfree(eth->scratch_head[i]);
  		eth->scratch_head[i] = NULL;
-@@ -5170,6 +5206,155 @@ static netdev_features_t mtk_features_check(struct sk_buff *skb,
+@@ -5170,6 +5206,155 @@ static netdev_features_t mtk_features_ch
  }
  #endif
  
@@ -269,7 +268,7 @@ diff --git a/drivers/net/ethernet/mediatek/mtk_eth_soc.c b/drivers/net/ethernet/
  static const struct ethtool_ops mtk_ethtool_ops = {
  	.get_link_ksettings	= mtk_get_link_ksettings,
  	.set_link_ksettings	= mtk_set_link_ksettings,
-@@ -5185,6 +5370,10 @@ static const struct ethtool_ops mtk_ethtool_ops = {
+@@ -5185,6 +5370,10 @@ static const struct ethtool_ops mtk_etht
  	.set_pauseparam		= mtk_set_pauseparam,
  	.get_rxnfc		= mtk_get_rxnfc,
  	.set_rxnfc		= mtk_set_rxnfc,
@@ -280,7 +279,6 @@ diff --git a/drivers/net/ethernet/mediatek/mtk_eth_soc.c b/drivers/net/ethernet/
  	.get_eee		= mtk_get_eee,
  	.set_eee		= mtk_set_eee,
  };
-diff --git a/drivers/net/ethernet/mediatek/mtk_eth_soc.h b/drivers/net/ethernet/mediatek/mtk_eth_soc.h
 --- a/drivers/net/ethernet/mediatek/mtk_eth_soc.h
 +++ b/drivers/net/ethernet/mediatek/mtk_eth_soc.h
 @@ -87,6 +87,23 @@
