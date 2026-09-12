@@ -1,0 +1,349 @@
+From: Lauri Nomme <lauri.nomme@gmail.com>
+Date: Sat, 12 Sep 2026 03:00:00 +0300
+Subject: [PATCH] net: ethernet: mtk_eth_soc: add RSS (Receive Side Scaling) for MT7988
+
+Combined register-definitions + RSS support retrofit for the MT7988
+(netsys v3). Adds a static Toeplitz hash key and 128-entry indirection
+table, plus ethtool rxfh hooks:
+
+  ethtool -x <iface>
+  ethtool --set-rxfh-indir <iface> equal/weight ...
+
+Gated on mtk_is_netsys_v3_or_greater() so MT7986/MT7622 in this 6.18
+target are untouched. Omitted the per-RX-ring IRQ-group programming the
+upstream patch carries (multi-ring NAPI); the single-NAPI RX path used by
+6.18.44 already serves all rings.
+
+Signed-off-by: Lauri Nomme <lauri.nomme@gmail.com>
+diff --git a/drivers/net/ethernet/mediatek/mtk_eth_soc.c b/drivers/net/ethernet/mediatek/mtk_eth_soc.c
+--- a/drivers/net/ethernet/mediatek/mtk_eth_soc.c
++++ b/drivers/net/ethernet/mediatek/mtk_eth_soc.c
+@@ -61,13 +61,18 @@ static const struct mtk_reg_map mtk_reg_map = {
+ 		.rx_ptr		= 0x0900,
+ 		.rx_cnt_cfg	= 0x0904,
+ 		.pcrx_ptr	= 0x0908,
++		.lro_ctrl_dw0   = 0x0980,
+ 		.glo_cfg	= 0x0a04,
+ 		.rst_idx	= 0x0a08,
+ 		.delay_irq	= 0x0a0c,
+ 		.irq_status	= 0x0a20,
+ 		.irq_mask	= 0x0a28,
+ 		.adma_rx_dbg0	= 0x0a38,
++		.lro_alt_score_delta	= 0x0a4c,
+ 		.int_grp	= 0x0a50,
++		.lro_rx1_dly_int	= 0x0a70,
++		.lro_ring_dip_dw0	= 0x0b04,
++		.lro_ring_ctrl_dw1	= 0x0b28,
+ 	},
+ 	.qdma = {
+ 		.qtx_cfg	= 0x1800,
+@@ -125,6 +130,7 @@ static const struct mtk_reg_map mt7986_reg_map = {
+ 	.tx_irq_mask		= 0x461c,
+ 	.tx_irq_status		= 0x4618,
+ 	.pdma = {
++		.rss_glo_cfg    = 0x2800,
+ 		.rx_ptr		= 0x4100,
+ 		.rx_cnt_cfg	= 0x4104,
+ 		.pcrx_ptr	= 0x4108,
+@@ -135,6 +141,12 @@ static const struct mtk_reg_map mt7986_reg_map = {
+ 		.irq_mask	= 0x4228,
+ 		.adma_rx_dbg0	= 0x4238,
+ 		.int_grp	= 0x4250,
++		.int_grp3	= 0x422c,
++		.lro_ctrl_dw0	= 0x4180,
++		.lro_alt_score_delta	= 0x424c,
++		.lro_rx1_dly_int	= 0x4270,
++		.lro_ring_dip_dw0	= 0x4304,
++		.lro_ring_ctrl_dw1	= 0x4328,
+ 	},
+ 	.qdma = {
+ 		.qtx_cfg	= 0x4400,
+@@ -183,10 +195,21 @@ static const struct mtk_reg_map mt7988_reg_map = {
+ 		.glo_cfg	= 0x6a04,
+ 		.rst_idx	= 0x6a08,
+ 		.delay_irq	= 0x6a0c,
++		.rx_cfg		= 0x6a10,
+ 		.irq_status	= 0x6a20,
+ 		.irq_mask	= 0x6a28,
+ 		.adma_rx_dbg0	= 0x6a38,
+ 		.int_grp	= 0x6a50,
++		.int_grp3	= 0x6a58,
++		.tx_delay_irq	= 0x6ab0,
++		.rx_delay_irq	= 0x6ac0,
++		.lro_ctrl_dw0	= 0x6c08,
++		.lro_alt_score_delta	= 0x6c1c,
++		.lro_ring_dip_dw0	= 0x6c14,
++		.lro_ring_ctrl_dw1	= 0x6c38,
++		.lro_alt_dbg	= 0x6c40,
++		.lro_alt_dbg_data	= 0x6c44,
++		.rss_glo_cfg	= 0x7000,
+ 	},
+ 	.qdma = {
+ 		.qtx_cfg	= 0x4400,
+@@ -3531,6 +3554,10 @@ static int mtk_dma_init(struct mtk_eth *eth)
+ 			return err;
+ 	}
+ 
++	err = mtk_rss_init(eth);
++	if (err)
++		return err;
++
+ 	if (MTK_HAS_CAPS(eth->soc->caps, MTK_QDMA)) {
+ 		/* Enable random early drop and set drop threshold
+ 		 * automatically
+@@ -3577,6 +3604,8 @@ static void mtk_dma_free(struct mtk_eth *eth)
+ 			mtk_rx_clean(eth, &eth->rx_ring[i], false);
+ 	}
+ 
++	mtk_rss_uninit(eth);
++
+ 	for (i = 0; i < DIV_ROUND_UP(soc->tx.fq_dma_size, MTK_FQ_DMA_LENGTH); i++) {
+ 		kfree(eth->scratch_head[i]);
+ 		eth->scratch_head[i] = NULL;
+@@ -5166,9 +5195,154 @@ static netdev_features_t mtk_features_check(struct sk_buff *skb,
+ 			features &= ~(NETIF_F_CSUM_MASK | NETIF_F_GSO_MASK);
+ 	}
+ 
+-	return features;
++static u32 mtk_rss_indr_table(struct mtk_rss_params *rss_params, int index)
++{
++	u32 val = 0;
++	int i;
++
++	for (i = 16 * index; i < 16 * index + 16; i++)
++		val |= (rss_params->indirection_table[i] << (2 * (i % 16)));
++
++	return val;
++}
++
++static int mtk_rss_init(struct mtk_eth *eth)
++{
++	const struct mtk_reg_map *reg_map = eth->soc->reg_map;
++	struct mtk_rss_params *rss_params = &eth->rss_params;
++	static u8 hash_key[MTK_RSS_HASH_KEYSIZE] = {
++		0xfa, 0x01, 0xac, 0xbe, 0x3b, 0xb7, 0x42, 0x6a,
++		0x0c, 0xf2, 0x30, 0x80, 0xa3, 0x2d, 0xcb, 0x77,
++		0xb4, 0x30, 0x7b, 0xae, 0xcb, 0x2b, 0xca, 0xd0,
++		0xb0, 0x8f, 0xa3, 0x43, 0x3d, 0x25, 0x67, 0x41,
++		0xc2, 0x0e, 0x5b, 0x25, 0xda, 0x56, 0x5a, 0x6d};
++	u32 val;
++	int i;
++
++	if (!mtk_is_netsys_v3_or_greater(eth))
++		return 0;
++
++	memcpy(rss_params->hash_key, hash_key, MTK_RSS_HASH_KEYSIZE);
++
++	for (i = 0; i < MTK_RSS_MAX_INDIRECTION_TABLE; i++)
++		rss_params->indirection_table[i] = i & 7;
++
++	/* Hash Type */
++	val = mtk_r32(eth, reg_map->pdma.rss_glo_cfg);
++	val |= MTK_RSS_IPV4_STATIC_HASH;
++	val |= MTK_RSS_IPV6_STATIC_HASH;
++	mtk_w32(eth, val, reg_map->pdma.rss_glo_cfg);
++
++	/* Hash Key */
++	for (i = 0; i < MTK_RSS_HASH_KEYSIZE / sizeof(u32); i++)
++		mtk_w32(eth, rss_params->hash_key[i], MTK_RSS_HASH_KEY_DW(i));
++
++	/* Select the size of indirection table */
++	for (i = 0; i < MTK_RSS_MAX_INDIRECTION_TABLE / 16; i++)
++		mtk_w32(eth, mtk_rss_indr_table(rss_params, i),
++			MTK_RSS_INDR_TABLE_DW(i));
++
++	/* Pause */
++	val |= MTK_RSS_CFG_REQ;
++	mtk_w32(eth, val, reg_map->pdma.rss_glo_cfg);
++
++	/* Enable RSS */
++	val |= MTK_RSS_EN;
++	mtk_w32(eth, val, reg_map->pdma.rss_glo_cfg);
++
++	/* Release pause */
++	val &= ~MTK_RSS_CFG_REQ;
++	mtk_w32(eth, val, reg_map->pdma.rss_glo_cfg);
++
++	return 0;
++}
++
++static void mtk_rss_uninit(struct mtk_eth *eth)
++{
++	const struct mtk_reg_map *reg_map = eth->soc->reg_map;
++	u32 val;
++
++	if (!mtk_is_netsys_v3_or_greater(eth))
++		return;
++
++	/* Pause */
++	val = mtk_r32(eth, reg_map->pdma.rss_glo_cfg);
++	val |= MTK_RSS_CFG_REQ;
++	mtk_w32(eth, val, reg_map->pdma.rss_glo_cfg);
++
++	/* Disable RSS */
++	val &= ~MTK_RSS_EN;
++	mtk_w32(eth, val, reg_map->pdma.rss_glo_cfg);
++
++	/* Release pause */
++	val &= ~MTK_RSS_CFG_REQ;
++	mtk_w32(eth, val, reg_map->pdma.rss_glo_cfg);
++}
++
++static u32 mtk_get_rxfh_key_size(struct net_device *dev)
++{
++	return MTK_RSS_HASH_KEYSIZE;
++}
++
++static u32 mtk_get_rxfh_indir_size(struct net_device *dev)
++{
++	return MTK_RSS_MAX_INDIRECTION_TABLE;
++}
++
++static int mtk_get_rxfh(struct net_device *dev, struct ethtool_rxfh_param *rxfh)
++{
++	struct mtk_mac *mac = netdev_priv(dev);
++	struct mtk_eth *eth = mac->hw;
++	struct mtk_rss_params *rss_params = &eth->rss_params;
++	int i;
++
++	if (rxfh->hfunc)
++		rxfh->hfunc = ETH_RSS_HASH_TOP;
++
++	if (rxfh->key) {
++		memcpy(rxfh->key, rss_params->hash_key,
++		       sizeof(rss_params->hash_key));
++	}
++
++	if (rxfh->indir) {
++		for (i = 0; i < MTK_RSS_MAX_INDIRECTION_TABLE; i++)
++			rxfh->indir[i] = rss_params->indirection_table[i];
++	}
++
++	return 0;
++}
++
++static int mtk_set_rxfh(struct net_device *dev, struct ethtool_rxfh_param *rxfh,
++			struct netlink_ext_ack *extack)
++{
++	struct mtk_mac *mac = netdev_priv(dev);
++	struct mtk_eth *eth = mac->hw;
++	struct mtk_rss_params *rss_params = &eth->rss_params;
++	const struct mtk_reg_map *reg_map = eth->soc->reg_map;
++	int i;
++
++	if (rxfh->hfunc != ETH_RSS_HASH_NO_CHANGE &&
++	    rxfh->hfunc != ETH_RSS_HASH_TOP)
++		return -EOPNOTSUPP;
++
++	if (rxfh->key) {
++		memcpy(rss_params->hash_key, rxfh->key,
++		       sizeof(rss_params->hash_key));
++		for (i = 0; i < MTK_RSS_HASH_KEYSIZE / sizeof(u32); i++)
++			mtk_w32(eth, rss_params->hash_key[i],
++				MTK_RSS_HASH_KEY_DW(i));
++	}
++
++	if (rxfh->indir) {
++		for (i = 0; i < MTK_RSS_MAX_INDIRECTION_TABLE; i++)
++			rss_params->indirection_table[i] = rxfh->indir[i];
++		for (i = 0; i < MTK_RSS_MAX_INDIRECTION_TABLE / 16; i++)
++			mtk_w32(eth, mtk_rss_indr_table(rss_params, i),
++				MTK_RSS_INDR_TABLE_DW(i));
++	}
++
++	return 0;
+ }
+-#endif
+ 
+ static const struct ethtool_ops mtk_ethtool_ops = {
+ 	.get_link_ksettings	= mtk_get_link_ksettings,
+@@ -5185,6 +5359,10 @@ static const struct ethtool_ops mtk_ethtool_ops = {
+ 	.set_pauseparam		= mtk_set_pauseparam,
+ 	.get_rxnfc		= mtk_get_rxnfc,
+ 	.set_rxnfc		= mtk_set_rxnfc,
++	.get_rxfh_key_size	= mtk_get_rxfh_key_size,
++	.get_rxfh_indir_size	= mtk_get_rxfh_indir_size,
++	.get_rxfh		= mtk_get_rxfh,
++	.set_rxfh		= mtk_set_rxfh,
+ 	.get_eee		= mtk_get_eee,
+ 	.set_eee		= mtk_set_eee,
+ };
+diff --git a/drivers/net/ethernet/mediatek/mtk_eth_soc.h b/drivers/net/ethernet/mediatek/mtk_eth_soc.h
+--- a/drivers/net/ethernet/mediatek/mtk_eth_soc.h
++++ b/drivers/net/ethernet/mediatek/mtk_eth_soc.h
+@@ -85,9 +85,26 @@
+ #define	MTK_HW_LRO_MAX_AGG_CNT		64
+ #define	MTK_HW_LRO_BW_THRE		3000
+ #define	MTK_HW_LRO_REPLACE_DELTA	1000
+-#define	MTK_HW_LRO_SDL_REMAIN_ROOM	1522
++#define#define	MTK_HW_LRO_SDL_REMAIN_ROOM	1522
++
++#define MTK_RSS_HASH_KEYSIZE		40
++#define MTK_RSS_MAX_INDIRECTION_TABLE	128
++#define MTK_RSS_EN			BIT(0)
++#define MTK_RSS_CFG_REQ		BIT(2)
++#define MTK_RSS_IPV6_STATIC_HASH	(0x7 << 8)
++#define MTK_RSS_IPV4_STATIC_HASH	(0x7 << 12)
++#define MTK_RSS_HASH_KEY_DW(x)		(reg_map->pdma.rss_glo_cfg + 0x20 +	\
++					 (x * 4))
++#define MTK_RSS_INDR_TABLE_DW(x)	(reg_map->pdma.rss_glo_cfg + 0x50 +	\
++					 (x * 4))
++
++struct mtk_rss_params {
++	u32		hash_key[MTK_RSS_HASH_KEYSIZE / sizeof(u32)];
++	u8		indirection_table[MTK_RSS_MAX_INDIRECTION_TABLE];
++};
+ 
+ /* Frame Engine Global Configuration */
++
+ #define MTK_FE_GLO_CFG(x)	(((x) == MTK_GMAC3_ID) ? 0x24 : 0x00)
+ #define MTK_FE_LINK_DOWN_P(x)	BIT(((x) + 8) % 16)
+ 
+@@ -1226,16 +1243,30 @@ struct mtk_reg_map {
+ 	u32	tx_irq_mask;
+ 	u32	tx_irq_status;
+ 	struct {
+-		u32	rx_ptr;		/* rx base pointer */
+-		u32	rx_cnt_cfg;	/* rx max count configuration */
+-		u32	pcrx_ptr;	/* rx cpu pointer */
+-		u32	glo_cfg;	/* global configuration */
+-		u32	rst_idx;	/* reset index */
+-		u32	delay_irq;	/* delay interrupt */
+-		u32	irq_status;	/* interrupt status */
+-		u32	irq_mask;	/* interrupt mask */
++		u32	rx_ptr;			/* rx base pointer */
++		u32	rx_cnt_cfg;		/* rx max count configuration */
++		u32	pcrx_ptr;		/* rx cpu pointer */
++		u32	pdrx_ptr;		/* rx dma pointer */
++		u32	glo_cfg;		/* global configuration */
++		u32	rst_idx;		/* reset index */
++		u32	rx_cfg;			/* rx dma configuration */
++		u32	delay_irq;		/* delay interrupt */
++		u32	irq_status;		/* interrupt status */
++		u32	irq_mask;		/* interrupt mask */
+ 		u32	adma_rx_dbg0;
+-		u32	int_grp;
++		u32	int_grp;		/* interrupt group1 */
++		u32	int_grp3;		/* interrupt group3 */
++		u32	tx_delay_irq;		/* tx delay interrupt */
++		u32	rx_delay_irq;		/* rx delay interrupt */
++		u32	lro_ctrl_dw0;		/* lro ctrl dword0 */
++		u32	lro_alt_score_delta;	/* lro auto-learn score delta */
++		u32	lro_rx1_dly_int;	/* lro rx ring1 delay interrupt */
++		u32	lro_ring_dip_dw0;	/* lro ring dip dword0 */
++		u32	lro_ring_ctrl_dw1;	/* lro ring ctrl dword1 */
++		u32	lro_alt_dbg;		/* lro auto-learn debug */
++		u32	lro_alt_dbg_data;	/* lro auto-learn debug data */
++		u32	rss_glo_cfg;		/* rss global configuration */
++
+ 	} pdma;
+ 	struct {
+ 		u32	qtx_cfg;	/* tx queue configuration */
+@@ -1464,6 +1495,7 @@ struct mtk_mac {
+ 	struct mtk_hw_stats		*hw_stats;
+ 	__be32				hwlro_ip[MTK_MAX_LRO_IP_CNT];
+ 	int				hwlro_ip_cnt;
++	struct mtk_rss_params		rss_params;
+ 	unsigned int			syscfg0;
+ 	struct notifier_block		device_notifier;
+ 	u8				dsa_queue_base;
