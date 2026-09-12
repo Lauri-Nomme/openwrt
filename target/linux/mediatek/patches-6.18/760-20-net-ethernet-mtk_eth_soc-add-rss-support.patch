@@ -2,23 +2,36 @@ From: Lauri Nomme <lauri.nomme@gmail.com>
 Date: Sat, 12 Sep 2026 03:00:00 +0300
 Subject: [PATCH] net: ethernet: mtk_eth_soc: add RSS (Receive Side Scaling) for MT7988
 
-Combined register-definitions + RSS support retrofit for the MT7988
-(netsys v3). Adds a static Toeplitz hash key and 128-entry indirection
-table, plus ethtool rxfh hooks:
+Combined register-definitions + RSS support retrofit onto the 6.18.44
+single-NAPI model. Adds a static Toeplitz hash key and 128-entry
+indirection table, plus ethtool rxfh hooks:
 
   ethtool -x <iface>
   ethtool --set-rxfh-indir <iface> equal/weight ...
 
 Gated on mtk_is_netsys_v3_or_greater() so MT7986/MT7622 in this 6.18
 target are untouched. Omitted the per-RX-ring IRQ-group programming the
-upstream patch carries (multi-ring NAPI); the single-NAPI RX path used by
-6.18.44 already serves all rings.
+upstream patch carries (multi-ring NAPI not present in 6.18.44 upstream).
 
 Signed-off-by: Lauri Nomme <lauri.nomme@gmail.com>
 diff --git a/drivers/net/ethernet/mediatek/mtk_eth_soc.c b/drivers/net/ethernet/mediatek/mtk_eth_soc.c
 --- a/drivers/net/ethernet/mediatek/mtk_eth_soc.c
 +++ b/drivers/net/ethernet/mediatek/mtk_eth_soc.c
-@@ -61,13 +61,18 @@ static const struct mtk_reg_map mtk_reg_map = {
+@@ -38,6 +38,13 @@
+ #include "mtk_eth_soc.h"
+ #include "mtk_wed.h"
+ 
++/*
++ * RSS support (retrofit). Defined later in the file but invoked during
++ * probe/teardown, so declare them here.
++ */
++static int mtk_rss_init(struct mtk_eth *eth);
++static void mtk_rss_uninit(struct mtk_eth *eth);
++
+ static int mtk_msg_level = -1;
+ module_param_named(msg_level, mtk_msg_level, int, 0);
+ MODULE_PARM_DESC(msg_level, "Message level (-1=defaults,0=none,...,16=all)");
+@@ -61,13 +68,18 @@ static const struct mtk_reg_map mtk_reg_map = {
  		.rx_ptr		= 0x0900,
  		.rx_cnt_cfg	= 0x0904,
  		.pcrx_ptr	= 0x0908,
@@ -37,7 +50,7 @@ diff --git a/drivers/net/ethernet/mediatek/mtk_eth_soc.c b/drivers/net/ethernet/
  	},
  	.qdma = {
  		.qtx_cfg	= 0x1800,
-@@ -125,6 +130,7 @@ static const struct mtk_reg_map mt7986_reg_map = {
+@@ -125,6 +137,7 @@ static const struct mtk_reg_map mt7986_reg_map = {
  	.tx_irq_mask		= 0x461c,
  	.tx_irq_status		= 0x4618,
  	.pdma = {
@@ -45,7 +58,7 @@ diff --git a/drivers/net/ethernet/mediatek/mtk_eth_soc.c b/drivers/net/ethernet/
  		.rx_ptr		= 0x4100,
  		.rx_cnt_cfg	= 0x4104,
  		.pcrx_ptr	= 0x4108,
-@@ -135,6 +141,12 @@ static const struct mtk_reg_map mt7986_reg_map = {
+@@ -135,6 +148,12 @@ static const struct mtk_reg_map mt7986_reg_map = {
  		.irq_mask	= 0x4228,
  		.adma_rx_dbg0	= 0x4238,
  		.int_grp	= 0x4250,
@@ -58,7 +71,7 @@ diff --git a/drivers/net/ethernet/mediatek/mtk_eth_soc.c b/drivers/net/ethernet/
  	},
  	.qdma = {
  		.qtx_cfg	= 0x4400,
-@@ -183,10 +195,21 @@ static const struct mtk_reg_map mt7988_reg_map = {
+@@ -183,10 +202,21 @@ static const struct mtk_reg_map mt7988_reg_map = {
  		.glo_cfg	= 0x6a04,
  		.rst_idx	= 0x6a08,
  		.delay_irq	= 0x6a0c,
@@ -80,7 +93,7 @@ diff --git a/drivers/net/ethernet/mediatek/mtk_eth_soc.c b/drivers/net/ethernet/
  	},
  	.qdma = {
  		.qtx_cfg	= 0x4400,
-@@ -3531,6 +3554,10 @@ static int mtk_dma_init(struct mtk_eth *eth)
+@@ -3531,6 +3561,10 @@ static int mtk_dma_init(struct mtk_eth *eth)
  			return err;
  	}
  
@@ -91,7 +104,7 @@ diff --git a/drivers/net/ethernet/mediatek/mtk_eth_soc.c b/drivers/net/ethernet/
  	if (MTK_HAS_CAPS(eth->soc->caps, MTK_QDMA)) {
  		/* Enable random early drop and set drop threshold
  		 * automatically
-@@ -3577,6 +3604,8 @@ static void mtk_dma_free(struct mtk_eth *eth)
+@@ -3577,6 +3611,8 @@ static void mtk_dma_free(struct mtk_eth *eth)
  			mtk_rx_clean(eth, &eth->rx_ring[i], false);
  	}
  
@@ -100,11 +113,10 @@ diff --git a/drivers/net/ethernet/mediatek/mtk_eth_soc.c b/drivers/net/ethernet/
  	for (i = 0; i < DIV_ROUND_UP(soc->tx.fq_dma_size, MTK_FQ_DMA_LENGTH); i++) {
  		kfree(eth->scratch_head[i]);
  		eth->scratch_head[i] = NULL;
-@@ -5166,9 +5195,154 @@ static netdev_features_t mtk_features_check(struct sk_buff *skb,
- 			features &= ~(NETIF_F_CSUM_MASK | NETIF_F_GSO_MASK);
- 	}
+@@ -5170,6 +5206,155 @@ static netdev_features_t mtk_features_check(struct sk_buff *skb,
+ }
+ #endif
  
--	return features;
 +static u32 mtk_rss_indr_table(struct mtk_rss_params *rss_params, int index)
 +{
 +	u32 val = 0;
@@ -252,12 +264,12 @@ diff --git a/drivers/net/ethernet/mediatek/mtk_eth_soc.c b/drivers/net/ethernet/
 +	}
 +
 +	return 0;
- }
--#endif
- 
++}
++
  static const struct ethtool_ops mtk_ethtool_ops = {
  	.get_link_ksettings	= mtk_get_link_ksettings,
-@@ -5185,6 +5359,10 @@ static const struct ethtool_ops mtk_ethtool_ops = {
+ 	.set_link_ksettings	= mtk_set_link_ksettings,
+@@ -5185,6 +5370,10 @@ static const struct ethtool_ops mtk_ethtool_ops = {
  	.set_pauseparam		= mtk_set_pauseparam,
  	.get_rxnfc		= mtk_get_rxnfc,
  	.set_rxnfc		= mtk_set_rxnfc,
@@ -271,13 +283,10 @@ diff --git a/drivers/net/ethernet/mediatek/mtk_eth_soc.c b/drivers/net/ethernet/
 diff --git a/drivers/net/ethernet/mediatek/mtk_eth_soc.h b/drivers/net/ethernet/mediatek/mtk_eth_soc.h
 --- a/drivers/net/ethernet/mediatek/mtk_eth_soc.h
 +++ b/drivers/net/ethernet/mediatek/mtk_eth_soc.h
-@@ -85,9 +85,26 @@
- #define	MTK_HW_LRO_MAX_AGG_CNT		64
- #define	MTK_HW_LRO_BW_THRE		3000
+@@ -87,6 +87,23 @@
  #define	MTK_HW_LRO_REPLACE_DELTA	1000
--#define	MTK_HW_LRO_SDL_REMAIN_ROOM	1522
-+#define#define	MTK_HW_LRO_SDL_REMAIN_ROOM	1522
-+
+ #define	MTK_HW_LRO_SDL_REMAIN_ROOM	1522
+ 
 +#define MTK_RSS_HASH_KEYSIZE		40
 +#define MTK_RSS_MAX_INDIRECTION_TABLE	128
 +#define MTK_RSS_EN			BIT(0)
@@ -293,12 +302,11 @@ diff --git a/drivers/net/ethernet/mediatek/mtk_eth_soc.h b/drivers/net/ethernet/
 +	u32		hash_key[MTK_RSS_HASH_KEYSIZE / sizeof(u32)];
 +	u8		indirection_table[MTK_RSS_MAX_INDIRECTION_TABLE];
 +};
- 
- /* Frame Engine Global Configuration */
 +
++
+ /* Frame Engine Global Configuration */
  #define MTK_FE_GLO_CFG(x)	(((x) == MTK_GMAC3_ID) ? 0x24 : 0x00)
  #define MTK_FE_LINK_DOWN_P(x)	BIT(((x) + 8) % 16)
- 
 @@ -1226,16 +1243,30 @@ struct mtk_reg_map {
  	u32	tx_irq_mask;
  	u32	tx_irq_status;
@@ -339,11 +347,12 @@ diff --git a/drivers/net/ethernet/mediatek/mtk_eth_soc.h b/drivers/net/ethernet/
  	} pdma;
  	struct {
  		u32	qtx_cfg;	/* tx queue configuration */
-@@ -1464,6 +1495,7 @@ struct mtk_mac {
- 	struct mtk_hw_stats		*hw_stats;
- 	__be32				hwlro_ip[MTK_MAX_LRO_IP_CNT];
- 	int				hwlro_ip_cnt;
+@@ -1385,6 +1416,8 @@ struct mtk_eth {
+ 	struct net_device		*dummy_dev;
+ 	struct net_device		*netdev[MTK_MAX_DEVS];
+ 	struct mtk_mac			*mac[MTK_MAX_DEVS];
++
 +	struct mtk_rss_params		rss_params;
- 	unsigned int			syscfg0;
- 	struct notifier_block		device_notifier;
- 	u8				dsa_queue_base;
+ 	int				irq[MTK_FE_IRQ_NUM];
+ 	u32				msg_enable;
+ 	unsigned long			sysclk;
