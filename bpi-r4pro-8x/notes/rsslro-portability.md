@@ -3,6 +3,13 @@
 Status: **NOT portable as-is.** Frank-w's RSS/LRO patches (from `6.18-main`,
 BPI-Router-Linux) do not apply to upstream 6.18.44.
 
+> **Update (2026-09-13):** the RSS half has since been **hand-ported** onto
+> 6.18.44 (option 2 below) on branch `bpi-r4pro-8x-v2-multiring-napi`. It
+> builds clean but the first TFTP-boot test **hangs in `mtk_eth` module init**.
+> See [`rss-multiring-napi-experiment.md`](rss-multiring-napi-experiment.md)
+> for the port details, module-swap rollback plan and boot-log diagnosis.
+> LRO remains unported.
+
 ## Commits (RSS/LRO series, dependency order)
 
 | commit | content | applies to 6.18.44? |

@@ -381,8 +381,13 @@ Not yet adopted, tracked here for when they land/mature:
   This directly fixes the **~1.6 Gbit bridged/local-routing CPU ceiling** on the
   MT7988: a forum user reported **4.5 → 8.4 Gbit/s with RSS enabled** (LRO
   still WIP, known to break on mt7988 in current form). Frank-w's patches live
-  in `6.18-main`/LTS branches. **When RSS/LRO land in OpenWrt main, rebase +
+  in   `6.18-main`/LTS branches. **When RSS/LRO land in OpenWrt main, rebase +
   adopt** → expect the lan6/R4 Pro routing to break past 1.6 Gbit.
+  - We hand-ported it onto 6.18.44 (branch `bpi-r4pro-8x-v2-multiring-napi`,
+    incl. building the driver as a module for swappable rollback). It **builds
+    clean but a TFTP-boot test hangs inside `mtk_eth` module init** — see
+    [`notes/rss-multiring-napi-experiment.md`](notes/rss-multiring-napi-experiment.md)
+    for the full port, module-swap plan, boot-log evidence and diagnosis.
 
 ### Explicitly skipped
 
