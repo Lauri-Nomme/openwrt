@@ -247,3 +247,43 @@ around the `mtk_r32(MTK_FE_GLO_MISC)` read (`FE_GLO_MISC read try1` /
 - if `read try1 OK` prints, hang moved elsewhere.
 - the marker set (42 in .ko; 43 source lines, one merged at compile) pins any
   further narrowing.
+
+### Sublevel distillation: upstream 6.18.44 → 6.18.49 differences in our area
+
+(Diffed the actual v6.18.44 vs v6.18.49 sources of mtk_eth_soc.{c,h},
+mt7530.c, pcs-mtk-lynxi.c. mt7530 DSA: **unchanged**.)
+
+**The hang-relevant path (`mtk_hw_init`/`mtk_hw_reset`/`ethsys_reset`, the
+FE_GLO_MISC read, reset writes, caps, register-map RSS offsets) is
+IDENTICAL in 6.18.44 and 6.18.49.** Sublevel drift is not the hang cause.
+
+All real 44→49 changes are in other domains:
+
+1. **QDMA TX multi-queue rework (biggest).** 6.18.49 reworked TX to
+   `MTK_QDMA_NUM_QUEUES=16` paged queueing: `mtk_tx_buf.flags`,
+   `MTK_TX_FLAGS_*`, `qid`/`skb_get_queue_mapping`, per-queue page registers
+   (`qdma.page`), and a flattened `mtk_tx_map`. Our 6.18.44 carried the older
+   single-queue + DSA per-port queue map (`MTK_DSA_USER_PORT_MAX`,
+   `dsa_queue_base`, `dsa_port_rank`), later dropped by 49.
+2. **`desc_shift` → `desc_size`** (rename of the same field; our port used
+   `desc_shift`, converted to `mtk_is_netsys_v3_or_greater()` checks).
+3. **`rx.dma_size` bumps: 512→2K** across soc data (and MT7988's 1K→2K in one
+   row) — descriptor ring sizing only, affects open-time alloc not probe.
+4. **MAC address path**: 6.18.49 inlined `of_get_ethdev_address` +
+   `eth_hw_addr_random` into `mtk_add_mac` (removed `mtk_mac_assign_address`);
+   DSA user-port queue mapping concept removed.
+5. **pcs-mtk-lynxi** reworked to a plain library: `mtk_pcs_lynxi_create(dev,
+   regmap, ana_rgc3, flags)` with an explicit `MTK_SGMII_FLAG_PN_SWAP` (from
+   `mediatek,pnswap`), instead of a platform driver with `of_platform`/mutex.
+6. **MT7988 caps slimmed** in 49: dropped GMAC1/2/3-SGMII/USXGMII and
+   MUX_GMAC123_* bits (8X wiring doesn't use them via DSA); removed
+   `MTK_RESV_BUF_MASK` (resv 0x80→0x40); dropped `num_tx_queues`,
+   `shared_sgmii_used`, `available_pcs[2]`, GMAC3/debug regs, FRAGLIST features.
+7. **`mtk_hw_dump*()` debug-print helpers removed** in 49.
+
+**Takeaway:** nothing in 49 touches probe/reset/RX-ring bring-up. The 8X is on
+a 6.18.44 base whose probe/FE-reset code is essentially identical to 6.18.49,
+and to frank-w's 6.18-main (RSS included). So the hang remains a
+runtime-state/environment difference, not a missing upstream fix and not our
+porting logic. The 43-marker build (ethsys_reset internals + FE_GLO_MISC
+try1/OK probes) isolates whether the FE read after reset hangs instantly.
