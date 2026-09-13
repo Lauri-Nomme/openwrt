@@ -796,8 +796,7 @@ define Device/bananapi_bpi-r4-pro-common
   DEVICE_PACKAGES := kmod-dsa-mxl862xx kmod-hwmon-pwmfan kmod-i2c-mux-pca954x \
 		     kmod-eeprom-at24 kmod-mt7996-firmware kmod-mt7996-233-firmware \
 		     kmod-rtc-pcf8563 kmod-sfp kmod-usb3 e2fsprogs f2fsck mkf2fs \
-		     mt7988-wo-firmware kmod-gpio-pca953x kmod-nvme \
-		     kmod-net-mediatek
+		     mt7988-wo-firmware kmod-gpio-pca953x kmod-nvme
   IMAGES := sysupgrade.itb
   KERNEL_LOADADDR := 0x46000000
   KERNEL_INITRAMFS_SUFFIX := -recovery.itb
