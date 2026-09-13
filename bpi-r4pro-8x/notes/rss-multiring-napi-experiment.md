@@ -341,3 +341,31 @@ eth2/combo ports.
 Note: all three RSS builds (module too) register eth2 when they get past
 probe; the hang (module, AIMARKER4) and the missing-eth2 (builtin, AIMARKER5)
 are two different consequences of the module-vs-builtin probe timing.
+
+### AIMARKER6 (mac-diag built-in boot) — ethtool RSS not supported because eth2 never registers
+
+mac-child diagnostic result (probe at ~9.1s):
+```
+mac-child mac avail=1 compat=1 -> add_mac ENTER   (mac0 -> eth0)
+mac-child mac avail=0 compat=1                      (mac1 SKIPPED: wan combo)
+mac-child mac avail=1 compat=1 -> add_mac ENTER   (mac2 -> should be eth2)
+...  "generated random MAC address 20:08:02:00:00:00"
+...  no eth2 frame engine / netdev
+```
+
+Mac1 (WAN combo) is disabled in the recovery ('fdt-1' base) DT because the
+wan-phy overlay isn't applied on the TFTP-recovery path (bootconf_extra only
+in production boot). Mac2 (10gbase-r SFP-bank MAC) IS walked + entered
+mtk_add_mac + reached MAC allocation ("generated random MAC") but its netdev
+does not appear — it returns early (likely fwnode_phylink_pcs_parse -> the
+10gbase-r/usxgmii PCS path) so no eth2.
+
+Consequence: ethtool -x / rx-flow-hash on any eth* returns "Netlink Error:
+Not supported" because our RSS rxfh hooks are in mtk_ethtool_ops but the
+RSS-capable eth2 netdev was never created, and eth0/eth1 (mt7530/MxL switch
+conduits) don't advertise RSS.
+
+Takeaway: the recovery/TFTP boot with base-DT is the wrong context to test
+RSS — mac1/mac2 need the combo overlays. Next: boot the PRODUCTION sysupgrade
+(or build a recovery that applies -lan-phy/-wan-phy) so mac1+mac2 are live,
+then RSS ethtool/iperf test has a device to act on.
