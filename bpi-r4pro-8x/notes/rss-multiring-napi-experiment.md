@@ -176,3 +176,16 @@ the port. If it then boots, the RSS ring hash/NAPI layer can still be tested
 duplication). The instrumented module (31 `MTKDBG:` markers) was rebuilt and
 the recover ITB restaged. **Next TFTP boot validates the fix** — if it boots,
 the hang was the DIM delay-IRQ rewrite as suspected.
+
+### DIM revert ruled out (boot after AIMARKER2, ~18:12)
+
+Booting the DIM-reverted image still hangs at the same point (last marker
+`probe request_irq block DONE` at 18.717, then RCU stall at 78.7 — identical).
+Disassembly of the built `.ko` confirms `mtk_dim_rx` does a single register
+write (reverted path). **The DIM rewrite is therefore NOT the cause**, despite
+being the only apparent RSS-specific code in the (mis-narrowed) window.
+
+Fine-grain markers added (36 total) bracketing every statement between the
+reset and FE-int-grouping: FE_GLO_MISC, pctl, MCR-loop, CDMQ, DIM, irq_disable.
+Rebuilt + restaged recovery ITB (18:22). This boot will name the exact
+hanging statement.
