@@ -235,3 +235,15 @@ to test next:
 Next boot (43-marker build) instruments inside `ethsys_reset` and around the
 FE_GLO_MISC read (try1 OK / write done) to characterize whether the read hangs
 instantly or whether a delay after reset lets the FE come up.
+
+### 43-marker build staged (21:08)
+
+Additional instrumentation inside `ethsys_reset` (ASSERT/DEASSERT/DONE) and
+around the `mtk_r32(MTK_FE_GLO_MISC)` read (`FE_GLO_MISC read try1` /
+`try1 OK (0x%08x)` / `write done`). Stage on TFTP at 21:08. Next boot:
+- if `ethsys_reset DONE` prints but `FE_GLO_MISC read try1` does not → the read
+  after reset hangs the bus instantly (confirming the `mtk_r32` after reset is
+  the exact wedge point).
+- if `read try1 OK` prints, hang moved elsewhere.
+- the marker set (42 in .ko; 43 source lines, one merged at compile) pins any
+  further narrowing.
