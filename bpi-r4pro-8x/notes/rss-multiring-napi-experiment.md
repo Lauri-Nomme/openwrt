@@ -168,3 +168,11 @@ to `reg_map->pdma.delay_irq` (0x6a0c) exactly like upstream. I.e. remove the
 `rx_delay_irq`/`tx_delay_irq`/`MTK_PDMA_DELAY_RX_RING_SHIFT` branches added by
 the port. If it then boots, the RSS ring hash/NAPI layer can still be tested
 (this only affects interrupt coalescing, not RSS routing).
+
+### Fix applied (build 17:48, staged on TFTP)
+
+`mtk_dim_rx` and `mtk_dim_tx` restored to upstream bodies (single
+`pdma.delay_irq` 0x6a0c write, no 0x6ab0/0x6ac0 split, no `val<<16` ring
+duplication). The instrumented module (31 `MTKDBG:` markers) was rebuilt and
+the recover ITB restaged. **Next TFTP boot validates the fix** — if it boots,
+the hang was the DIM delay-IRQ rewrite as suspected.
