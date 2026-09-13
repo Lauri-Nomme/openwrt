@@ -63,7 +63,8 @@ define KernelPackage/net-mediatek
   DEPENDS:=@TARGET_mediatek_filogic
   KCONFIG:=CONFIG_NET_MEDIATEK_SOC
   FILES:= \
-	$(LINUX_DIR)/drivers/net/ethernet/mediatek/mtk_eth.ko
+	$(LINUX_DIR)/drivers/net/ethernet/mediatek/mtk_eth.ko \
+	$(LINUX_DIR)/drivers/net/ethernet/mediatek/mtk_wed_ops.ko
   AUTOLOAD:=$(call AutoProbe,mtk_eth)
 endef
 
