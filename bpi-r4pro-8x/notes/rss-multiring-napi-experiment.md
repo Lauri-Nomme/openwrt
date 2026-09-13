@@ -1,8 +1,9 @@
 # RSS multi-ring NAPI port (6.18.44) — port, module swap, TFTP-boot experiment
 
-Status (2026-09-13): **ported + builds clean; TFTP-boot test HANGS in
-`mtk_eth` module init — under active diagnosis with an instrumented driver.**
-NAND untouched throughout (TFTP boot is RAM-only).
+Status (2026-09-14): **RSS boots via TFTP with all 6 FIT overlays (bootconf_extra
+fix); eth2 + 4 RX rings live. RSS ethtool surface completed (760-24).** NAND
+untouched throughout (TFTP boot is RAM-only). Remaining: lan5/mt7530 mgmt link
+drops in the recovery boot (~AIMARKER10).
 
 Branch: `bpi-r4pro-8x-v2-multiring-napi` (off `bpi-r4pro-8x-v2`).
 
@@ -369,3 +370,60 @@ Takeaway: the recovery/TFTP boot with base-DT is the wrong context to test
 RSS — mac1/mac2 need the combo overlays. Next: boot the PRODUCTION sysupgrade
 (or build a recovery that applies -lan-phy/-wan-phy) so mac1+mac2 are live,
 then RSS ethtool/iperf test has a device to act on.
+
+### AIMARKER10 (2026-09-14) — bootconf_extra TFTP fix: all 6 overlays load, eth2 + RSS now testable
+
+**Boot path fix first.** `run boot_tftp` was `bootm $loadaddr#$bootconf`
+(base fdt-1 only). The FIP default env carries
+`bootconf_extra=...-cn13#...-cn14#...-8x-lan-phy#...-8x-wan-phy` but the
+*device's saved env* (env.txt, Sep 3) did not contain `bootconf_extra`, so
+the TFTP recovery boot never applied the combo overlays. Changed
+`boot_tftp` in the live env (via `fw_setenv`), matching
+`boot_production`/`boot_recovery`:
+
+```
+boot_tftp=tftpboot $loadaddr $bootfile && bootm $loadaddr#$bootconf#$bootconf_emmc#$bootconf_extra
+```
+
+Result (AIMARKER10 console): every TFTP boot now loads the full overlay set in
+order — `config-...-8x` → `-emmc` → `-cn13` → `-cn14` → `-8x-lan-phy` → `-8x-wan-phy` —
+before handing off to the kernel. (Same for the NAND `boot_production` path.)
+
+**AIMARKER6 blocker gone:** with the combo overlays applied, `mac2` is
+available at probe → **eth2 registers** on the TFTP/recovery boot too
+(`mtk_soc_eth 15100000.ethernet eth2 ... irq 104`, 4 RX rings,
+10Gbps up). The "RSS not testable, no eth2" problem of AIMARKER6 is resolved.
+
+**RSS hardware live, ethtool surface incomplete.** On eth2:
+- `ethtool -i eth2` → `mtk_soc_eth`; irq 104
+- `ethtool -x eth2` → 4 RX rings, round-robin indir table + hash key readable;
+  but **"RSS hash function: Operation not supported"**
+- `ethtool -X eth2 equal 4` → accepted
+- `ethtool -n eth2 rx-flow-hash tcp4` → **"Cannot get RX network flow hashing
+  options: Not supported"**
+- `ethtool -L eth2 combined 4` → **"netlink error: Not supported"**
+- `ethtool -S eth2` → aggregate NIC + serdes stats only (no per-ring RX)
+
+Root cause (driver, not boot): three ethtool surface gaps in `mtk_eth_soc.c`:
+1. `mtk_get_rxnfc` has no `ETHTOOL_GRXFH` case → `-EOPNOTSUPP` for rx-flow-hash.
+2. `mtk_ethtool_ops` has no `get_channels`/`set_channels` → `-L` fails.
+3. `mtk_get_rxfh` sets `hfunc` only `if (rxfh->hfunc)`; the ioctl GET path
+   passes `hfunc=0` so it's never filled → "Operation not supported".
+
+Fixed in **760-24** (`net: ethernet: mtk_eth_soc: expose RSS channels +
+flow-hash via ethtool`): GRXFH reports Toeplitz on IP src/dst + L4 ports for
+tcp4/tcp6/udp4/udp6 when `MTK_RSS`; get/set_channels report
+`MTK_RX_RSS_NUM` combined (1 for non-RSS SoCs); get_rxfh always returns
+`ETH_RSS_HASH_TOP`. Built + restaged as the TFTP recovery ITB (01:52) for
+AIMARKER11.
+
+**Still-open — LAN link drop (not ethtool):** during AIMARKER10, mt7530
+`lan5`/`eth0` (the cable to the management box 10.222.1.1) came up at
+[36.0], then **link dropped at [47.99] and never returned** for the rest of
+the session — hence `ping 10.222.1.1` was 100% loss in that boot while
+`br-lan`/other ports stayed up (`ip neigh` showed 10.222.1.1 as
+incomplete/00:00:00:00:00:00). Same box is reachable on the NAND production
+boot (lan5 UP, `a8:b8:e0:0a:28:48` learned on lan5). So the recovery/TFTP
+boot in this branch currently loses the mgmt link; needs its own look
+(link-flap on mt7530 under multiring/NAPI build, or a config/timing issue)
+before iperf/RSS validation over that port.
