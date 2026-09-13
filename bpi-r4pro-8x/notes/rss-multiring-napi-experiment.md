@@ -315,3 +315,29 @@ vs the trees that boot. Candidate next experiments:
    context leaves FE unclocked vs a working boot.
 3. a built-in (CONFIG_NET_MEDIATEK_SOC=y) build was prepared (22:24, unstaged)
    to test the module-vs-builtin runtime difference; not yet booted.
+
+### Built-in (=y) RSS build boots but LOSES eth2 / combo ports (AIMARKER5, 22:42)
+
+The =y RSS recovery ITB **does not hang** (FE_GLO_MISC read completes:
+`try1 OK (0x8000c016)`); probe SUCCESS, br-lan lan1-5 up, MxL switch up,
+user space reached. **But eth2 (the combo-port MAC) is missing.**
+
+Evidence: `ip a` shows only indices 1..12 (lo, eth0, eth1, lan5@eth0,
+gre/gretap/erspan, lan1-4@eth1, br-lan) — no eth2, no lan6/wan. Driver probe
+walked only TWO `add_mac` calls in the successful pass (markers: add_mac
+ENTER x2), yet the 8X DTS has THREE `mediatek,eth-mac` children (mac@0/1/2,
+aliases gmac0/1/2), and MTK_MAX_DEVS=3. The for_each_child loop skips nodes
+that fail `of_device_is_compatible` or `of_device_is_available`; mac@2 must
+have failed `of_device_is_available` at probe time.
+
+Root cause (strong, evidence-backed): the =y driver probes during kernel init
+(~8.69s) in the SAME instant the FIT enumerates/applies the combo DT overlays
+(`-lan-phy`/`-wan-phy`/`-lan-sfp`/`-wan-sfp` sub-images listed at 8.690991+).
+With =m the driver probes at ~18s, long after overlays are live, so mac@2 is
+available -> eth2 registers (earlier module boots showed eth0/1/2). With =y
+the probe races overlay application, mac@2 not yet "okay" -> skipped -> no
+eth2/combo ports.
+
+Note: all three RSS builds (module too) register eth2 when they get past
+probe; the hang (module, AIMARKER4) and the missing-eth2 (builtin, AIMARKER5)
+are two different consequences of the module-vs-builtin probe timing.
