@@ -287,3 +287,31 @@ and to frank-w's 6.18-main (RSS included). So the hang remains a
 runtime-state/environment difference, not a missing upstream fix and not our
 porting logic. The 43-marker build (ethsys_reset internals + FE_GLO_MISC
 try1/OK probes) isolates whether the FE read after reset hangs instantly.
+
+### DEFINITIVE: the `mtk_r32(MTK_FE_GLO_MISC)` read hangs the bus (AIMARKER4, 22:42)
+
+43-marker module build booted. Markers prove the exact wedge:
+
+```
+[   18.759320] MTKDBG: probe request_irq block DONE
+[   18.763925] MTKDBG: FE_GLO_MISC read try1          <- mtk_r32() invoked
+[   78.765776] rcu: INFO: rcu_sched stalls ... CPU 0  <- 60 s later, bus pinned
+```
+
+`FE_GLO_MISC read try1 OK` never printed → **`mtk_r32(eth, MTK_FE_GLO_MISC)` never
+returns**. `ethsys_reset` (ASSERT/DEASSERT/DONE) and `CHK_IDLE_EN` write both
+completed fine. So the FE domain does not answer its register read ~24 us after
+reset deassert → AXI bus hang on CPU 0 → RCU stall → watchdog reset.
+
+**Refined hypothesis:** the FE clock/domain is not settled/clocked when
+`mtk_hw_init` reads `MTK_FE_GLO_MISC` right after `mtk_hw_reset`. It is not a
+porting-logic error in the RSS code path, and not a 6.18.44-vs-6.18.49
+difference (functions byte-identical to both upstream 49 and frank-w's
+RSS-merged tree). Likely a **runtime state/clock-timing** interplay in our tree
+vs the trees that boot. Candidate next experiments:
+1. insert a delay (e.g. `mdelay(50)`) or FE-idle poll between `mtk_hw_reset` and
+   the `MTK_FE_GLO_MISC` read, to see if the read then succeeds (settle-time test).
+2. inspect/try the clock/PM enable path (`mtk_clk_enable`) and whether our module
+   context leaves FE unclocked vs a working boot.
+3. a built-in (CONFIG_NET_MEDIATEK_SOC=y) build was prepared (22:24, unstaged)
+   to test the module-vs-builtin runtime difference; not yet booted.
