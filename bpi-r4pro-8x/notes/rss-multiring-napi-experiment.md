@@ -427,3 +427,48 @@ boot (lan5 UP, `a8:b8:e0:0a:28:48` learned on lan5). So the recovery/TFTP
 boot in this branch currently loses the mgmt link; needs its own look
 (link-flap on mt7530 under multiring/NAPI build, or a config/timing issue)
 before iperf/RSS validation over that port.
+
+### MANAGEMENT-box cable move during AI10 + lan6 driver delta
+
+The operator pulled the mgmt cable out of the original port during AI10 and
+re-seated it. Port link-up sequence in the AI10 console (lines 46974-50553):
+- `lan5` (mt7530/eth0, original port): up [36.0] → **down [47.99], never came back**
+- the moved cable came up as **`lan6` (mxl86252) at [62.079], 10G, forwarded [62.09]**; flapped once [510→514], then stable
+- lan1/2/3 up from [35-37]; lan4 never up
+
+**Even with lan6 UP, `10.222.1.1` never answered ARP** (incomplete
+`00:00:00:00:00:00`, ping 5/5 then 1/1 loss). Triage of who is "broken":
+
+- lan6 = MxL switch16 `port@13`, CPU uplink = `gmac2` → **eth2** — the SAME
+  MAC that 760-22 reworked into 4-ring multiring NAPI + RSS. lan1-4 ride the
+  same MxL switch → eth2 path. So lan6 IS inside the blast radius of our
+  work.
+- AI10 shows eth2 RX was alive at the DMA level (`ethtool -S eth2`:
+  `rx_packets: 3308`), but `tcpdump -i lan6` = 0 pkts → **nothing reached the
+  netdev/stack over the MxL/eth2 path** despite rings counting RX. Consistent
+  with a broken multiring/RSS RX handoff (frames into rings, never
+  polled/delivered).
+- **Control to run on AIMARKER11:** re-seat the mgmt cable into **lan5**
+  (mt7530/eth0 — path NOT touched by our work; the NAND/v2 boot currently
+  reaches 10.222.1.1 on lan5) and ping:
+  - lan5 works + lan6 doesn't → our eth2/MxL RX path is at fault
+  - lan5 fails too → something more general in the branch boot
+
+**Driver delta for lan6's PHY (checked live, 2026-09-14):**
+
+| boot | lan6 PHY binding (mdio-bus:18) |
+|---|---|
+| working NAND (installed v2 kernel) | `Generic Clause 45 PHY` (as21xxx only on mdio-bus:1c = eth1/phy28, fw 1.9.1) |
+| AI10 (branch kernel over TFTP) | **`Aeonsemi AS21010JB1`** on mdio-bus:18 — as21xxx claimed phy24 too and loaded fw 1.9.1 on both 0x18 and 0x1c |
+
+So the SAME phy addr (0x18) binds the bare `Generic Clause 45 PHY` driver in
+the working boot but the **as21xxx driver in the branch boot** (different
+kernel: installed v2 vs our RSS build). That is a real branch-vs-installed
+kernel difference in phy driver binding for lan6's PHY.
+
+Also observed in an early boot (console line ~4905-4912, banner at 4127 =
+first TFTP boot): `lan6 (uninitialized): validation of usxgmii ...
+failed: -EINVAL` / `failed to connect to PHY: -EINVAL` / `error -22 setting
+up PHY for ... port 13` — in that boot lan6's PHY link-up FAILED outright
+whereas in AI10 it linked. Both are branch-boot anomalies on the
+eth2/MxL/port-13 path that the NAND boot does not show.
