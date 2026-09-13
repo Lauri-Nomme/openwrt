@@ -108,3 +108,19 @@ function.
   images + `mtk_eth_v2-KNOWN-GOOD.ko`.
 - `/data/tftp/openwrt-...-initramfs-recovery.itb` — RSS recovery (TFTP menu 2).
 - `/data/tftp/console.log` — full console capture of the experiment.
+
+## Next test (staged)
+
+Instrumented recovery image (31 `MTKDBG:` markers in `mtk_eth.ko`, all `pr_err`
+so loglevel-independent) is staged as the TFTP-root recovery itb. Boot via
+U-Boot menu **2** with:
+
+```
+setenv bootargs 'console=ttyS0,115200n1 loglevel=8 initcall_debug'
+run boot_tftp
+```
+
+Expected: the console prints `calling init_module+0x0/... [mtk_eth]`, then the
+`MTKDBG:` markers up to the last step that completes — the next (unprinted)
+marker names the hanging function (suspects: `mtk_get_irqs_pdma`,
+per-ring `request_irq`, `mtk_napi_init`, or `mtk_hw_init` FE int-group).
