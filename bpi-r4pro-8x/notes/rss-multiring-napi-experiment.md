@@ -189,3 +189,49 @@ Fine-grain markers added (36 total) bracketing every statement between the
 reset and FE-int-grouping: FE_GLO_MISC, pctl, MCR-loop, CDMQ, DIM, irq_disable.
 Rebuilt + restaged recovery ITB (18:22). This boot will name the exact
 hanging statement.
+
+### Fine-grain boot (AIMARKER3, ~20:11) — hang narrowed to `mtk_r32(MTK_FE_GLO_MISC)`
+
+36-marker fine-grain build booted. Last markers:
+
+```
+[   18.743270] MTKDBG: hw_reset -> CHK_IDLE_EN done
+[   18.747878] MTKDBG: probe request_irq block DONE      ← next stmt never runs
+              [would print: FE_GLO_MISC read try1]        ← NEVER
+```
+
+Hang = **`mtk_r32(eth, MTK_FE_GLO_MISC)`** — a FE-domain register read executed
+~24 µs after `mtk_hw_reset` returned (the reset ends with
+`regmap_write(ethsys, ETHSYS_FE_RST_CHK_IDLE_EN, 0x6f8ff)`; `mtk_hw_init` then
+immediately reads `MTK_FE_GLO_MISC` (0x124)). Read hangs the bus → all CPUs stuck.
+
+### Conceptual step-by-step vs frank-w 6.18-main (his boots, ours hangs)
+
+Compared against the actual `mtk_eth_soc.c/.h` from
+`frank-w/BPI-Router-Linux` branch `6.18-main`:
+
+| component | frank-w vs ours |
+|---|---|
+| `mtk_hw_init` | **identical** (after pruning my markers) |
+| `mtk_hw_reset` / `mtk_hw_warm_reset` / `ethsys_reset` | **identical** |
+| `mtk_r32`/`mtk_w32` accessors | **identical** |
+| `mt7988_reg_map` offsets (rss_glo_cfg, int_grp3, rx/tx_delay_irq, …) | **identical** (only ours adds `page` fields from 6.18 base, unrelated) |
+| `MT7988_CAPS` (`MTK_PDMA_INT | MTK_RSS`) | **identical** |
+| `MTK_FE_GLO_MISC`/`MTK_FE_INT_GRP`/`ETHSYS_FE_RST_CHK_IDLE_EN` defines | **identical** |
+| probe pre-`mtk_hw_init` ordering (sram/wed/irq_fe/irq_pdma/clks) | **identical** |
+
+**Conclusion:** the static code sequence, register values, caps and defines are
+byte-identical (modulo my `pr_err` markers) to frank-w's tree that boots on the
+same hardware. Therefore the hang is **NOT a logical/porting error in the code
+path** — it's a runtime-state/environment difference. Remaining runtime suspects
+to test next:
+1. FE domain needs longer settle after reset than `ethsys_reset`'s `mdelay(10)`
+   + immediate read — i.e. a timing issue (probe: add delay / retry-read markers).
+2. Some prior init (WED/SRAM/clock/coherency) leaves a different domain state in
+   our build vs frank-w's full tree (his tree has other dt/config deltas).
+3. A `.config`/DTS difference between our tree and frank-w's (fetched-file diff
+   only covers the driver source; the board dt/config may differ).
+
+Next boot (43-marker build) instruments inside `ethsys_reset` and around the
+FE_GLO_MISC read (try1 OK / write done) to characterize whether the read hangs
+instantly or whether a delay after reset lets the FE come up.
