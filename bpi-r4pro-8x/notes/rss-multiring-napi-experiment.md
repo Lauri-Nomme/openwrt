@@ -124,3 +124,47 @@ Expected: the console prints `calling init_module+0x0/... [mtk_eth]`, then the
 `MTKDBG:` markers up to the last step that completes — the next (unprinted)
 marker names the hanging function (suspects: `mtk_get_irqs_pdma`,
 per-ring `request_irq`, `mtk_napi_init`, or `mtk_hw_init` FE int-group).
+
+## RESULT (boot with 31 MTKDBG markers) — hang located
+
+The marker trace (console `/data/tftp/console.log`) localised the hang to a
+4-line window inside `mtk_hw_init`, **after** FE/GMAC register setup and
+**exactly at the rewritten DIM calls**:
+
+```
+[   16.793304] MTKDBG: hw_reset -> CHK_IDLE_EN done
+[   16.797914] MTKDBG: probe request_irq block DONE     ← misnamed; it is the
+              ...                                       marker right AFTER the
+              ^C[   76.805846] rcu: INFO: ... CPU 1     reset call in mtk_hw_init
+```
+
+The unprinted following marker is `hw_init -> FE int grouping`. The code
+executed between the two markers (printed → not printed) is: v3 `FE_GLO_MISC`
+r/w, pctl GPIO regmap writes, MAC-MCR loop, CDMQ r/w — **all identical to
+v2** — and then the **only RSS-specific change in this window**:
+
+- `mtk_dim_rx()` → for netsys-v3 writes **`reg_map->pdma.rx_delay_irq` (`0x6ac0`)**
+  with `val |= val << MTK_PDMA_DELAY_RX_RING_SHIFT` (bit 16 duplicated to ring bits)
+- `mtk_dim_tx()` → for netsys-v3 writes **`reg_map->pdma.tx_delay_irq` (`0x6ab0`)**
+
+v2 (working) wrote DIM only to `pdma.delay_irq` (`0x6a0c`). The RSS port
+introduced the split TX/RX delay-IRQ registers `0x6ab0/0x6ac0` together with
+the `val << 16` ring-duplication, inside the `mtk_dim_rx/tx` that
+`mtk_hw_init` calls inline during probe.
+
+**Conclusion:** the hang is caused by the RSS DIM rewrite — most likely
+writing the wrong register offset (`0x6ab0/0x6ac0` vs the real PDMA
+delay-IRQ register) and/or the `val << MTK_PDMA_DELAY_RX_RING_SHIFT`
+duplication at a point in probe where it corrupts the IRQ config and fires an
+unhandled interrupt (no NAPI/IRQ handler registered yet) → CPU 1 IRQ storm +
+RCU stall. `mtk_hw_init` subsequently disables IRQs (`mtk_tx/rx_irq_disable
+~0`), but the damage (pending/active IRQ with no handler) already spins CPU1.
+
+### Proposed fix (next boot to validate)
+
+Keep the v2 DIM behaviour on 6.18.44: in `mtk_dim_rx`/`mtk_dim_tx`, **drop the
+RSS split-register + ring-shift path for netsys-v3** and write the plain value
+to `reg_map->pdma.delay_irq` (0x6a0c) exactly like upstream. I.e. remove the
+`rx_delay_irq`/`tx_delay_irq`/`MTK_PDMA_DELAY_RX_RING_SHIFT` branches added by
+the port. If it then boots, the RSS ring hash/NAPI layer can still be tested
+(this only affects interrupt coalescing, not RSS routing).
