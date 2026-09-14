@@ -19,39 +19,55 @@ Two machines, one cable between them, plus the banana's own WAN uplink:
 - Serial console to the banana via `minicom-console.sh` → `/data/tftp/console.log`.
 - This box is also the TFTP boot source (`serverip 192.168.1.254`).
 
-**The banana (BPI-R4 Pro 8X, `10.222.1.2`):**
-- `eth0` (gmac0) → internal **mt7530** switch → `lan5` — **the mgmt port this
-  box is cabled into today** (NAND boot learns `a8:b8:e0:0a:28:48` on lan5).
-- `eth1` (gmac1) → `AS21010JB1` PHY phy28 (`mdio-bus:1c`) → **WAN**
-  `82.131.28.40/22`, gw `82.131.28.1`, DHCP. Separate cable, upstream internet.
-- `eth2` (gmac2) → **MxL86252 switch** `switch16` (`mdio-bus:10`) → the 8X
-  combo ports: `lan1..lan4` (phys mii:00–03) + `lan6` (port@13, phy24
-  `AS21010JB1` on `mdio-bus:18`, usxgmii inband). **eth2 is the RSS/multiring
-  MAC this branch reworks.**
-- `br-lan` bridges `lan1 lan2 lan3 lan4 lan5 lan6` → `10.222.1.2/24`
-  (`network.@device[0].ports`, `network.lan`).
+**The banana (BPI-R4 Pro 8X, `10.222.1.2`) — internal SoC layout**
+
+One SoC ethernet controller `ethernet@15100000` (`mtk_soc_eth`) hosts **three
+MACs**, each a separate netdev + a DSA master or standalone conduit:
+
+| MAC | netdev | role | goes to |
+|---|---|---|---|
+| `gmac0` mac@0 | `eth0` | **DSA master, tree 1** (internal switch) | internal `switch@15020000` (mt7530-mmio), cpu port@6, 10G fixed link |
+| `gmac1` mac@1 | `eth1` | **standalone WAN** (usxgmii) | `AS21010JB1` phy28 (`mdio-bus:1c`), `82.131.28.40/22`, gw `.1`, DHCP |
+| `gmac2` mac@2 | `eth2` | **DSA master, tree 0** (MxL switch) | external `switch16` (`mdio-bus:10`), cpu port@9, 10gbase-r, tag `mxl862xx-8021q` |
+
+Two **DSA switches**:
+- **tree 0 — MxL86252** (`switch16`, mdio-bus:10, dsa `member <0 0>`), master
+  eth2/gmac2. User ports: `lan1..lan4` (integrated phys `mii:00–03`) + `lan6`
+  (`port@13`, external `AS21010JB1` phy24 on `mdio-bus:18`, usxgmii inband).
+  **This tree (and thus eth2) is the RSS/multiring MAC this branch reworks.**
+- **tree 1 — internal `switch@15020000`** (mt7530-mmio, dsa `member <1 0>`),
+  master eth0/gmac0. Only user port: `lan5` (`gsw_port0`, ex-"mgmt", the RJ45
+  this box is cabled into; gsw_port1–3 disabled on r4pro).
+
+`br-lan` bridges `lan1 lan2 lan3 lan4 lan5 lan6` → `10.222.1.2/24`
+(`network.@device[0].ports`, `network.lan`); `network.wan` = `eth1`.
 
 ```
-                    internet / ISP
-                         │
-                         │ eth1 (WAN) 82.131.28.40/22 ── AS21010JB1 phy28 (mdio-bus:1c)
-                         │   gw 82.131.28.1
-                 ┌───────┴────────┐
-                 │   BANANA       │  BPI-R4 Pro 8X  br-lan 10.222.1.2/24
-                 └───┬──────┬─────┘
-                     │      │
-   eth2 ─ MxL        │      │ mt7530 ── eth0
-   switch16         │      └── lan5 ◄── MGMT CABLE (currently)
-   (gmac2/RSS)      │                      │
-   ┌──────┬─────┬───┘                  ┌───┴────────────┐
-   │      │     │                      │   DEV BOX       │
- lan1  lan2  lan3  lan4   lan6         │   eth0          │
- (mii0)(mii1)(mii2)(mii3)(port@13)     │   a8:b8:e0:0a:28:48
-   phy24 AS21010JB1                     │   10.222.1.1/24   (mgmt box)
-   mdio-bus:18                          │   10.222.1.22/24
-                                        │   192.168.1.254/24 (TFTP server)
-                                        │   /data/tftp + console.log
-                                        └─────────────────┘
+                 ┌──────────────────────── BANANA (BPI-R4 Pro 8X) ────────────────────────┐
+                 │  SoC  mediaTek MT7988                                                  │
+                 │  ethernet@15100000  (mtk_soc_eth)                                      │
+                 │   ┌ gmac0 ── eth0 ──── DSA master (tree 1)                             │
+                 │   │  10G fixed-link ⇄ internal switch@15020000  (mt7530-mmio)          │
+                 │   │                        cpu port@6 ── user port gsw_port0            │
+                 │   └                                  = lan5 ◄═ MGMT CABLE              │
+                 │   ┌ gmac1 ── eth1 ── usxgmii ── AS21010JB1 phy28 (mdio-bus:1c) ══ WAN   │
+                 │   │                   82.131.28.40/22 ─ gw 82.131.28.1 (internet)       │
+                 │   └ gmac2 ── eth2 ── DSA master (tree 0)   ◄═══ RSS/multiring MAC      │
+                 │      10gbase-r fixed ⇄ MxL86252 switch16 (mdio-bus:10)                 │
+                 │                         cpu port@9   tag mxl862xx-8021q                 │
+                 │                         ports:                                          │
+                 │                           lan1 mii:00 │ lan2 mii:01                     │
+                 │                           lan3 mii:02 │ lan4 mii:03                     │
+                 │                           lan6 port@13 ─ usxgmii ─ AS21010JB1 phy24     │
+                 │                                        (mdio-bus:18)                    │
+                 └──────────────┬─────────────────────────────────────────────────────────┘
+                                │  lan5 (mgmt cable, currently)
+                                └──────────────────► DEV BOX
+                                        eth0  a8:b8:e0:0a:28:48
+                                        10.222.1.1/24     (mgmt box + 10.222.20.0/24 gw)
+                                        10.222.1.22/24
+                                        192.168.1.254/24  (TFTP server /data/tftp)
+                                        serial console ──► /data/tftp/console.log
 ```
 
 Notes relevant to the AIMARKER experiments:
