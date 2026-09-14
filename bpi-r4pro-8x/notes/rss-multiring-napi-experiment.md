@@ -7,6 +7,63 @@ drops in the recovery boot (~AIMARKER10).
 
 Branch: `bpi-r4pro-8x-v2-multiring-napi` (off `bpi-r4pro-8x-v2`).
 
+## Topology — what is connected to what (checked 2026-09-14)
+
+Two machines, one cable between them, plus the banana's own WAN uplink:
+
+**The dev box (this machine, TFTP server):**
+- `eth0` MAC `a8:b8:e0:0a:28:48`, carries three addresses on one cable:
+  - `10.222.1.1/24` (management box — target of the AI ping tests)
+  - `10.222.1.22/24`
+  - `192.168.1.254/24` (U-Boot `serverip` / TFTP server root `/data/tftp`)
+- Serial console to the banana via `minicom-console.sh` → `/data/tftp/console.log`.
+- This box is also the TFTP boot source (`serverip 192.168.1.254`).
+
+**The banana (BPI-R4 Pro 8X, `10.222.1.2`):**
+- `eth0` (gmac0) → internal **mt7530** switch → `lan5` — **the mgmt port this
+  box is cabled into today** (NAND boot learns `a8:b8:e0:0a:28:48` on lan5).
+- `eth1` (gmac1) → `AS21010JB1` PHY phy28 (`mdio-bus:1c`) → **WAN**
+  `82.131.28.40/22`, gw `82.131.28.1`, DHCP. Separate cable, upstream internet.
+- `eth2` (gmac2) → **MxL86252 switch** `switch16` (`mdio-bus:10`) → the 8X
+  combo ports: `lan1..lan4` (phys mii:00–03) + `lan6` (port@13, phy24
+  `AS21010JB1` on `mdio-bus:18`, usxgmii inband). **eth2 is the RSS/multiring
+  MAC this branch reworks.**
+- `br-lan` bridges `lan1 lan2 lan3 lan4 lan5 lan6` → `10.222.1.2/24`
+  (`network.@device[0].ports`, `network.lan`).
+
+```
+                    internet / ISP
+                         │
+                         │ eth1 (WAN) 82.131.28.40/22 ── AS21010JB1 phy28 (mdio-bus:1c)
+                         │   gw 82.131.28.1
+                 ┌───────┴────────┐
+                 │   BANANA       │  BPI-R4 Pro 8X  br-lan 10.222.1.2/24
+                 └───┬──────┬─────┘
+                     │      │
+   eth2 ─ MxL        │      │ mt7530 ── eth0
+   switch16         │      └── lan5 ◄── MGMT CABLE (currently)
+   (gmac2/RSS)      │                      │
+   ┌──────┬─────┬───┘                  ┌───┴────────────┐
+   │      │     │                      │   DEV BOX       │
+ lan1  lan2  lan3  lan4   lan6         │   eth0          │
+ (mii0)(mii1)(mii2)(mii3)(port@13)     │   a8:b8:e0:0a:28:48
+   phy24 AS21010JB1                     │   10.222.1.1/24   (mgmt box)
+   mdio-bus:18                          │   10.222.1.22/24
+                                        │   192.168.1.254/24 (TFTP server)
+                                        │   /data/tftp + console.log
+                                        └─────────────────┘
+```
+
+Notes relevant to the AIMARKER experiments:
+- The management box **always sits on a br-lan switch port**; normally `lan5`
+  (mt7530/eth0). During AIMARKER10 the cable was moved and came up on `lan6`
+  (MxL/eth2 path) — the port under test for our RSS RX handoff.
+- `10.222.20.0/24` is routed via `10.222.1.1` (dev box) on br-lan
+  (`network.@route[0]`).
+- U-Boot TFTP uses `ipaddr 192.168.1.1` / `serverip 192.168.1.254` on a
+  separate logical subnet from the `10.222.1.x` LAN; the same physical cable
+  carries both (multi-address `eth0` on the dev box).
+
 ## Why
 
 The MT7988 bridged/local-routing path is CPU-limited to ~1.6 Gbit/s on the
