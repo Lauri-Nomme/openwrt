@@ -545,3 +545,134 @@ failed: -EINVAL` / `failed to connect to PHY: -EINVAL` / `error -22 setting
 up PHY for ... port 13` — in that boot lan6's PHY link-up FAILED outright
 whereas in AI10 it linked. Both are branch-boot anomalies on the
 eth2/MxL/port-13 path that the NAND boot does not show.
+
+### RSS RX isn't delivering — full-diff investigation vs frank-w 6.18-main (2026-09-14)
+
+**Question:** the management box (10.222.1.1) was unreachable in the AI10
+TFTP boot even on a port with link up. Why — is it our multiring/RSS port?
+
+**Evidence (AI10, console 46974-50553):**
+- eth2 (gmac2, MxL switch uplink) is UP, 10G, 4 RX rings allocated
+  (`ethtool -x eth2` round-robin indir table readable; `-X equal 4` accepted).
+- `ethtool -S eth2` → `rx_packets: 3308` / `rx_bytes: 279205` — but these are
+  **HW MAC counters** (`mtk_stats_update_mac` reads GDM/PSE MAC stats, not
+  software NAPI delivery). So frames ARE entering the frame engine.
+- `tcpdump -n -i lan6` → **0 packets**; `ip neigh` shows 10.222.1.1 as
+  `00:00:00:00:00:00` incomplete → ARP never answered. Frames counted at the
+  MAC but **never delivered to the network stack**.
+- eth0 (mt7530/lan5, tree1) and eth2 (MxL, tree0) BOTH silent — i.e. ALL
+  frame-engine RX silent, not just lan6.
+- `DSA: tree 0 setup` + `DSA: tree 1 setup` both printed; eth0/eth1/eth2 all
+  `frame engine ... irq 104`; per-ring `pdma0..3` IRQs requested (MTKDBG
+  `get_irqs_pdma -> platform_get_irq_byname` x4).
+
+**Method — full-fidelity code diff against the reference:**
+Fetched `frank-w/BPI-Router-Linux@6.18-main` `mtk_eth_soc.{c,h}` and
+normalized-diffed every RX-relevant function against our built (patched)
+`mtk_eth_soc.c` (build_dir tree, the exact object AI10 ran).
+
+Result table (normalized: whitespace, MTKDBG markers, `MTK_RSS_RING`/`MTK_HW_LRO_RING`/`NAPI_NUM` symbol names, 6.18.44-vs-6.18-main accessor renames like `napi_build_skb` vs `build_skb` and `RX_DESC_OFS` vs `desc_size`):
+
+| function | ours vs frank |
+|---|---|
+| `mtk_poll_rx` | **identical logic** (only accessor renames) |
+| `mtk_napi_rx` | identical |
+| `mtk_handle_irq_rx` / `mtk_handle_irq` | identical |
+| `mtk_rss_init` | identical (incl. per-RSS-group INT routing) |
+| `mtk_napi_init` | differs only by HWLRO block (dropped in ours) |
+| `mtk_dma_init` / `mtk_dma_free` / `mtk_init_fq_dma` | identical except HWLRO ring indices (4-7) / `num_tx_queues` |
+| `mtk_gdm_config` | identical |
+| `mtk_select_queue` | differs — **TX only** |
+| MT7988 pdma regmap (rx_ptr 0x6900, int_grp 0x6a50/0x6a54, int_grp3 0x6a58, rss_glo_cfg 0x7000) | identical |
+
+**Ring/IRQ wiring (both trees):**
+- NAPI: ring0 + RSS rings 1-3, each `mtk_napi_rx` polls its own ring,
+  enables/disables its own `MTK_RX_DONE_INT(ring_no)` (netsys-v3: `BIT(24+ring)`).
+- IRQs: with `MTK_PDMA_INT` (MT7988), per-ring `irq_pdma[0..3]` each
+  `mtk_handle_irq_rx(IRQF_SHARED, dev_id=&rx_napi[i])`. The shared
+  `mtk_handle_irq` (fe irq 104) only dispatches slave ring0 + TX.
+- RSS done distribution: ring1→`pdma.int_grp`, ring2→`int_grp+0x4`, ring3→`int_grp3`.
+
+**Conclusion (high-confidence):** the RX NAPI/IRQ/ring/RSS code in our port is
+**byte-equivalent to the reference tree that boots RSS correctly on the same
+hardware**. The two structural deltas are (a) HWLRO removal
+(frank: `MTK_HWLRO` cap + rings 4-7/`NAPI_NUM=8`; ours: none) and
+(b) `mtk_select_queue` TX differences — neither explains total RX silence on
+eth2/eth0.
+
+**What this rules out:** no *porting-logic* bug in the RX delivery path as the
+cause. The REAL remaining suspects are runtime/hardware-state, consistent with
+earlier AI findings:
+
+1. **RSS spreads flows across rings 1-3, but only ring0's NAPI gets serviced**
+   if the per-ring pdma0..3 IRQs don't actually fire on this silicon/DT combo
+   → frames pile in rings 1-3, HW MAC stats climb, stack sees nothing.
+   (This is the leading hypothesis; identical code ≠ identical HW behaviour
+   if the RSS indir/done-int routing registers end up misprogrammed at runtime.)
+2. **lan6/phy24 phy-driver binding delta** (as21xxx vs Generic C45) — but this
+   would not explain eth0/tree1 silence, so it is secondary.
+3. DT-overlay probe race from AI5 (eth2 lost when builtin) — AI10 had eth2
+   present, so not active here, but the pattern (probe timing vs overlay)
+   remains relevant to RSS ring/DMA setup.
+
+### Diagnostic to isolate ring/IRQ delivery (AI11)
+
+Purpose: determine whether RSS is spreading traffic to rings 1-3 and whether
+their per-ring IRQs fire. Low-risk, no kernel rebuild needed for `/proc`.
+
+At the U-Boot prompt (mgmt console, serial):
+```
+echo AIMARKER11
+setenv bootargs 'console=ttyS0,115200n1 pci=pcie_bus_perf loglevel=8 initcall_debug'
+run boot_tftp
+```
+Once booted, from the serial console or SSH:
+
+```sh
+# 1. Are the per-ring PDMA IRQs firing at all? (watch counters while pinging)
+for i in 1 2 3 4 5 6; do
+  before=$(grep -E "pdma" /proc/interrupts | tr -d ' ')
+  ping -c 3 -W 1 10.222.1.1 >/dev/null 2>&1
+  after=$(grep -E "pdma" /proc/interrupts | tr -d ' ')
+  echo "== round $i =="; echo before: $before; echo after:  $after
+done
+# If ring0's pdma IRQ counts climb but 1-3 are frozen → RSS spread confirmed,
+# delivery dead on 1-3.
+
+# 2. Confirm which rings are truly enabled in HW
+cat /proc/interrupts | grep -iE "pdma|fe" 
+
+# 3. Software-side: RSS reachable via ethtool on the DSA conduit
+ethtool -x eth2 ; ethtool -X eth2 equal 4 ; ethtool -x eth2
+
+# 4. Discriminator: does RX work on eth0/tree1 (mt7530) at all?
+#    plug the mgmt cable into lan5 (mt7530 path, no MxL), ping 10.222.1.1:
+#      lan5 RX ok + lan6 RX dead  -> MxL/eth2 path specific (suspects 1/2)
+#      lan5 RX dead too           -> frame-engine wide (shared IRQ/ring0 wedge)
+
+# 5. Kill the equal-4 hypothesis quickly: set RSS to fewer rings
+ethtool -X eth2 weight 1 0 0 0    # if RX suddenly works -> RSS routing is the wedge
+```
+
+**Interpreting `#5`:** `equal 4` spread = flows (incl. the mgmt ARP flow) can
+land on rings 1-3; `weight 1 0 0 0` forces everything to ring0. If traffic
+then flows, the bug is definitively "RSS routes to rings 1-3 whose IRQs/NAPI
+never run", pointing at the per-ring PDMA IRQ/routing setup (runtime) rather
+than the ported code.
+
+**Longer-term fixes to try if ring0-only fixes it:**
+- Trace `irq_pdma[1..3]` firing with `devm_request_irq` + a counter, or netif
+  msg level (`ethtool -s eth2 msglvl 0xff`) to see `done rx N, intr 0x...`.
+- Compare against a build with frank's **HWLRO rings 4-7 + NAPI_NUM=8** kept
+  (fills the same PDMA IRQ lines as the reference) — do NOT prune HWLRO until
+  RSS is proven standalone.
+- If the shared `mtk_handle_irq` never schedules rings 1-3 *and* per-ring
+  `pdma` IRQs don't appear in `/proc/interrupts`, the DT interrupt-names for
+  the 8X may lack/order `pdma1..3` → check the applied FDT
+  (`/sys/firmware/devicetree/base/soc/ethernet@15100000/interrupt-names`).
+
+**Status:** the ethtool surface (760-24) is in and staged; the RX-delivery
+question remains OPEN, isolated to the ring/IRQ runtime path above. lan5
+control test is the fastest discriminator and is now in the notes for AI11.
+Branches at HEAD `3674b4db72` (topology+AI10 docs); next push pending AI11
+results.
