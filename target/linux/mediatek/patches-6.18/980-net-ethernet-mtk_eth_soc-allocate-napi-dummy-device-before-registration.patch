@@ -25,16 +25,15 @@ probe error path instead of the now-unneeded err_unreg_netdev cleanup.
 
 Variant for the RSS/multi-ring tree: same reorder against the mtk_probe()
 tail as modified by the multi-ring NAPI/RSS patch (eth->irq_fe, per-ring
-rx_napi[] + MTK_RSS ring add, MTKDBG prints kept).
+rx_napi[] + MTK_RSS ring add). Also reroute the dummy-allocation-failure
+goto to err_deinit_ppe (err_unreg_netdev label is removed).
 ---
- drivers/net/ethernet/mediatek/mtk_eth_soc.c | 40 +++++++++++++---------
- 1 file changed, 22 insertions(+), 18 deletions(-)
+ drivers/net/ethernet/mediatek/mtk_eth_soc.c | 42 ++++++++++++++---------
+ 1 file changed, 23 insertions(+), 19 deletions(-)
 
-diff --git a/drivers/net/ethernet/mediatek/mtk_eth_soc.c b/drivers/net/ethernet/mediatek/mtk_eth_soc.c
-index d3ee264..a10e118 100644
 --- a/drivers/net/ethernet/mediatek/mtk_eth_soc.c
 +++ b/drivers/net/ethernet/mediatek/mtk_eth_soc.c
-@@ -6251,28 +6251,18 @@ if (MTK_HAS_CAPS(eth->soc->caps, MTK_INFRA)) {
+@@ -6181,28 +6181,18 @@
  		}
  	}
  
@@ -69,10 +68,10 @@ index d3ee264..a10e118 100644
  	}
  	eth->dummy_dev->threaded = 1;
  	strcpy(eth->dummy_dev->name, "mtk_eth");
-@@ -6289,15 +6279,29 @@ if (MTK_HAS_CAPS(eth->soc->caps, MTK_INFRA)) {
+@@ -6215,15 +6205,29 @@
+ 				       mtk_napi_rx);
+ 	}
  
- 
- 	pr_err("MTKDBG: probe SUCCESS (end)\n");
 +	for (i = 0; i < MTK_MAX_DEVS; i++) {
 +		if (!eth->netdev[i])
 +			continue;
@@ -101,5 +100,3 @@ index d3ee264..a10e118 100644
  	mtk_ppe_deinit(eth);
  	mtk_mdio_cleanup(eth);
  err_free_dev:
--- 
-2.39.2
