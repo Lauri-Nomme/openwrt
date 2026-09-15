@@ -1,0 +1,91 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Lauri Nomme <lauri.nomme@gmail.com>
+Date: Tue, 15 Sep 2026 21:00:00 +0300
+Subject: net: ethernet: mtk_eth_soc: allocate NAPI dummy device before netdev registration
+
+The netdevs share one DMA ring and one NAPI set, carried by an internal
+dummy netdevice (eth->dummy_dev). mtk_probe() currently allocates that
+dummy device only AFTER registering the netdevs, leaving a window where a
+netdev is already visible to the network core / netifd while eth->dummy_dev
+is still NULL.
+
+netifd brings the first netdev up the moment it is registered; mtk_open()
+then runs mtk_dma_init() -> mtk_rx_alloc() -> __xdp_rxq_info_reg(), which
+sees eth->dummy_dev == NULL and fires
+
+  WARNING: CPU: ... Missing net_device from driver   (net/core/xdp.c)
+
+returning -ENODEV. mtk_open() fails and the interface (observed as WAN eth1
+on BPI-R4 Pro 8X) stays down until manually reopened once probe has
+finished.
+
+Close the race by allocating the dummy device (and adding the shared
+tx/rx NAPI onto it) before the netdevs are registered, and free it from the
+probe error path instead of the now-unneeded err_unreg_netdev cleanup.
+---
+ drivers/net/ethernet/mediatek/mtk_eth_soc.c | 36 +++++++++++++-------
+ 1 file changed, 20 insertions(+), 16 deletions(-)
+
+diff --git a/drivers/net/ethernet/mediatek/mtk_eth_soc.c b/drivers/net/ethernet/mediatek/mtk_eth_soc.c
+index c4f80aa..5ca904f 100644
+--- a/drivers/net/ethernet/mediatek/mtk_eth_soc.c
++++ b/drivers/net/ethernet/mediatek/mtk_eth_soc.c
+@@ -5827,6 +5827,24 @@ static int mtk_probe(struct platform_device *pdev)
+ 		}
+ 	}
+ 
++	/* we run 2 devices on the same DMA ring so we need a dummy device
++	 * for NAPI to work. Allocate it before registering the netdevs: a
++	 * concurrent ndo_open as soon as the first netdev becomes visible
++	 * (e.g. netifd bringing up WAN) must never observe eth->dummy_dev
++	 * as NULL, or mtk_rx_alloc() -> __xdp_rxq_info_reg() WARNs with
++	 * "Missing net_device from driver" and the interface is left down.
++	 */
++	eth->dummy_dev = alloc_netdev_dummy(0);
++	if (!eth->dummy_dev) {
++		err = -ENOMEM;
++		dev_err(eth->dev, "failed to allocated dummy device\n");
++		goto err_deinit_ppe;
++	}
++	eth->dummy_dev->threaded = 1;
++	strcpy(eth->dummy_dev->name, "mtk_eth");
++	netif_napi_add(eth->dummy_dev, &eth->tx_napi, mtk_napi_tx);
++	netif_napi_add(eth->dummy_dev, &eth->rx_napi, mtk_napi_rx);
++
+ 	for (i = 0; i < MTK_MAX_DEVS; i++) {
+ 		if (!eth->netdev[i])
+ 			continue;
+@@ -5841,29 +5859,15 @@ static int mtk_probe(struct platform_device *pdev)
+ 				   eth->netdev[i]->base_addr, eth->irq[MTK_FE_IRQ_SHARED]);
+ 	}
+ 
+-	/* we run 2 devices on the same DMA ring so we need a dummy device
+-	 * for NAPI to work
+-	 */
+-	eth->dummy_dev = alloc_netdev_dummy(0);
+-	if (!eth->dummy_dev) {
+-		err = -ENOMEM;
+-		dev_err(eth->dev, "failed to allocated dummy device\n");
+-		goto err_unreg_netdev;
+-	}
+-	eth->dummy_dev->threaded = 1;
+-	strcpy(eth->dummy_dev->name, "mtk_eth");
+-	netif_napi_add(eth->dummy_dev, &eth->tx_napi, mtk_napi_tx);
+-	netif_napi_add(eth->dummy_dev, &eth->rx_napi, mtk_napi_rx);
+-
+ 	platform_set_drvdata(pdev, eth);
+ 	schedule_delayed_work(&eth->reset.monitor_work,
+ 			      MTK_DMA_MONITOR_TIMEOUT);
+ 
+ 	return 0;
+ 
+-err_unreg_netdev:
+-	mtk_unreg_dev(eth);
+ err_deinit_ppe:
++	if (eth->dummy_dev)
++		free_netdev(eth->dummy_dev);
+ 	mtk_ppe_deinit(eth);
+ 	mtk_mdio_cleanup(eth);
+ err_free_dev:
+-- 
+2.39.2

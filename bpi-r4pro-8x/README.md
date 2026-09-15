@@ -30,6 +30,7 @@ What this branch **still changes** vs main (the minimal, intentional deltas):
 | U-Boot NVMe | `NVME_PCI` + `CMD_NVME` + `BLK` | not enabled |
 | gmac1 (WAN combo) name | **`eth1`** (drop upstream `wan` rename) | `wan` |
 | Interface MACs | **stable, patched from onboard AT24C02 EEPROM via nvmem (patch `979`)** | random per boot |
+| Boot-time WAN (eth1) bring-up | **driver race fixed (patch `980`**: NAPI dummy dev allocated before netdev registration) | race: eth1 left DOWN until manual `ifup` |
 
 Everything else (as21xxx, MxL driver, packaging) is taken verbatim from
 upstream main. See `git log bpi-r4pro-8x-v2 --not upstream/main` for the
