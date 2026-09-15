@@ -765,3 +765,27 @@ Diagnostics that keep working (760-24): `ethtool -x` shows toeplitz on
 eth0/1/2; `ethtool -l eth2` says Combined 4. On-device `-n rx-flow-hash` and
 `-L combined` still print "Not supported" — that's the OLD ethtool CLI on the
 banana, not the driver (which answers `-x`/`-l`/`-S`).
+
+### What does multiring/RSS actually buy? (A/B measured, 2026-09-15)
+
+Counterfactual test on banana ingress (iPerf3 -P4 changwang->banana), comparing
+all-RX-on-ring0 (`ethtool -X eth2 weight 1 0 0 0`) vs 4-ring RSS (`equal 4`):
+
+| config | banana ingress | CPU picture |
+|---|---|---|
+| single-ring | 4.32 G | 1 NAPI kthread @26% (all on CPU0), load 1.12 |
+| 4-ring RSS (4 flows) | 4.90 G (+13%) | spread across 4 kthreads (10/10/7/5%), still 15% idle |
+| 4-ring RSS (16 flows) | 4.17 G | — |
+
+Interpretation (honest): raw NIC ingress is wall-limited by the SoC PDMA RX
+ingress ceiling (~4.2-4.9 G) regardless of ring count, so the button-measured
+gain is small (+~0.6 G). The real benefit of multiring/RSS is **CPU
+spreading / headroom**: single-ring pegs one core for all RX, while 4-ring
+distributes the kthread work across 4 CPUs. That matters for the actual router
+workload (concurrent bridging/NAT across many flows), not for this
+raw-endpoint iperf. On this exact box a classic routing test maxes at 1G (WAN
+eth1 = 1000Mb/s, LAN = one bridged 10G) so it cannot show RSS scaling.
+
+Final answer to "does RSS help": yes for load-spreading headroom (+confirmed all
+4 rings fire + split load), minimal for single-NIC raw ingress on this chip due
+to the PDMA ingress wall.
