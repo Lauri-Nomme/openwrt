@@ -55,3 +55,42 @@ BPI-Router-Linux) do not apply to upstream 6.18.44.
 - `frank-w/BPI-Router-Linux` branch `6.18-main` (merged v6.18.49).
 - netdev RFC: see forum #26071; patchwork series (Nov 2025) still unmerged.
 - No timeline yet.
+### Upstream status check (2026-09-16, after flash + RSS-measurement phase)
+
+**OpenWrt main absorbed the 8X board work** — all PRs cited in
+`bpi-r4pro-8x/README.md` are MERGED:
+- PR #21083 (BPi-R4 Pro 8X support) — merged 2026-08-24
+- PR #24900 (as21xxx phy) — merged 2026-09-01
+- PR #23477 / #24642 (MxL862xx DSA sync) — merged 2026-05-27 / 2026-08-23
+- PR #24892 (mxl862xx assisted learning) — merged 2026-09-01
+
+**Kernel RSS/LRO series is STILL NOT merged** (now `[net-next v8]`, posted
+2026-05-09 by Frank Wunderlich, from Mason Chang's SDK series). Jakub
+Kicinski requested splitting it (multi-queue/NAPI support vs RSS programming);
+review ongoing. Track:
+- patchwork/lore: "Add RSS and LRO support" mtk_eth_soc, v8 (2026-05-09), msg
+  id `20260509190938.169290-1-linux@fw-web.de`
+- key review points raised so far: `rss_num=4` set on mt7981/7986 without
+  `MTK_RSS` (inconsistent caps); `.get_rxfh`/`.set_rxfh` exposed
+  unconditionally for all SoCs (should be gated on MTK_RSS);
+  `mtk_dim_rx` v3 branch only programs 2 ring slots; `MTK_RX_DONE_INT(eth,0)`
+  changed V3 bit 14 → 24; `rx.desc_size`-gated (not caps-gated) LRO paths.
+
+**Upstream v8 deltas vs OUR 760-21/22/23/24 port** (things to cherry-pick if
+upstream ever merges — or to learn from now):
+- `netdev_rss_key_fill()` + `ethtool_rxfh_indir_default()` (randomized key
+  per boot) instead of our hardcoded static key.
+- `.get_rx_ring_count` new ethtool op (upstream moved GRXRINGS there) —
+  our 760-24's GRXFH handling would need rebasing onto that.
+- Keeps `MTK_HWLRO` (rings 4-7, `MTK_RX_NAPI_NUM=8`) on MT7988 — RSS and
+  HW-LRO rings coexist; our port pruned HWLRO (note that as "upstream does
+  NOT prune").
+- Cover letter claims **~7.3 Gbps RX** on MT7988 with the 4 PDMA IRQs spread
+  to 4 CPUs via `/proc/irq/*/smp_affinity` — higher than our measured
+  ~5.4 G (we spread threaded-NAPI kthreads; they spread the IRQs). Worth
+  re-testing whether spreading IRQs AND kthreads together or the HWLRO rings
+  account for the difference.
+
+**Action when RSS/LRO merges upstream:** the 760-21/22/23/24 patches should
+be dropped in favour of the upstream kernel series (and re-verify nothing of
+760-24's ethtool surface is lost).
