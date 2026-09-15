@@ -676,3 +676,35 @@ question remains OPEN, isolated to the ring/IRQ runtime path above. lan5
 control test is the fastest discriminator and is now in the notes for AI11.
 Branches at HEAD `3674b4db72` (topology+AI10 docs); next push pending AI11
 results.
+
+### AIMARKER11 (2026-09-15, after stable-MAC rebase + 980 fix) — RSS WORKS: 9.4 Gbit/s
+
+Rebuilt after: stable-MAC patch (979) wired in via rebase, and 980 regenerated
+(previous 980 referenced uncommitted MTKDBG context -> clean-extract Hunk#2
+fail + dangling `goto err_unreg_netdev` compile error; fixed by rerouting the
+dummy-alloc-failure goto to err_deinit_ppe, dropping the label).
+
+TFTP boot AIMARKER11 results (console 57622-61236):
+- **Stable MACs**: eth0=00:0c:43:36:2f:60, eth1=...:61, eth2=...:62 (nvmem,
+  deterministic per boot; previously random).
+- All 6 FIT overlays applied; kernel "Tue Sep 15 17:55".
+- **All 4 PDMA IRQs fire** (`/proc/interrupts`): PDMA RX 0 (irq106/221),
+  RSS RX 1 (107/222), RSS RX 2 (108/223), RSS RX 3 (109/224) — all counting.
+  => the AI10 "rings silent / frames counted at MAC but never delivered"
+  blocker is resolved.
+- `ethtool -x eth0/eth1/eth2` all report `RSS hash function: toeplitz: on`
+  (760-24 hfunc fix works).
+- RSS indir control validated both ways:
+  `ethtool -X eth2 weight 1 0 0 0` -> ping OK; `-X eth2 equal 4` -> ping OK.
+- LAN+WAN routing functional: `traceroute 4.2.2.1` crosses real internet hops.
+- **iperf3 -R -P4 and -P4: SUM 10.9 GBytes, ~9.40 Gbit/s, 0 retransmits.**
+  (Baseline single-NAPI was ~1.6 Gbit/s.) RSS/multiring goal achieved.
+- Note: `ethtool -n <if> rx-flow-hash tcp4` and `ethtool -L <if> combined 4`
+  still print "Not supported" — this is the DEVICE's old ethtool CLI binary,
+  not the driver (the driver answers `-x` indir+key+hfunc, `-l` channels, and
+  `-S` fine). Re-flash a current ethtool on the banana to exercise those two.
+
+Status: **RSS multi-ring NAPI port is functional and benchmarked at ~9.4 Gbit/s
+on the TFTP boot.** Remaining nice-to-haves: newer ethtool on-device, drop the
+MTKDBG-instrumented vs committed delta, and optionally restore HWLRO rings for
+full parity with frank-w's tree.
