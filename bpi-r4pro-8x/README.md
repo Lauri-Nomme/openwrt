@@ -29,10 +29,13 @@ What this branch **still changes** vs main (the minimal, intentional deltas):
 | U-Boot PCIe | `PCIE_MEDIATEK_GEN3` | `PCIE_MEDIATEK` |
 | U-Boot NVMe | `NVME_PCI` + `CMD_NVME` + `BLK` | not enabled |
 | gmac1 (WAN combo) name | **`eth1`** (drop upstream `wan` rename) | `wan` |
+| Interface MACs | **stable, patched from onboard AT24C02 EEPROM via nvmem (patch `979`)** | random per boot |
 
-everything else (as21xxx, MxL driver, packaging) is taken verbatim from
+Everything else (as21xxx, MxL driver, packaging) is taken verbatim from
 upstream main. See `git log bpi-r4pro-8x-v2 --not upstream/main` for the
-single delta commit.
+deltas. Interface MAC determinants: `gmac0` (eth0 / lan5) = EEPROM `0x20`,
+`gmac1` (WAN eth1) = EEPROM `0x30`, `gmac2` (eth2 / lan1-4,6) = EEPROM `0x38`
+(derived once from the board serial `R4PRO8X-BAK4....`, see `979-...patch`).
 
 ## Branch: `bpi-r4pro-8x` (superseded)
 

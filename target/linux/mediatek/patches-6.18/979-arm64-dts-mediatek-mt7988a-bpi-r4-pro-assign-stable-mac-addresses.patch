@@ -1,0 +1,79 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Lauri Nomme <lauri.nomme@gmail.com>
+Date: Tue, 15 Sep 2026 18:00:00 +0300
+Subject: arm64: dts: mediatek: mt7988a-bpi-r4-pro: assign stable MAC addresses from onboard EEPROM
+
+The mt7988a-bananapi-bpi-r4-pro.dtsi leaves gmac0/1/2 without any
+mac-address source, so mtk_eth_soc falls back to a boot-scoped random
+address on eth0/eth1/eth2. Wire the three ethernet MACs to the onboard
+AT24C02 EEPROM (i2c eeprom@57) via nvmem cells so the interfaces get
+stable, deterministic addresses:
+
+  gmac0 (eth0, internal switch tree1 / lan5)   -> EEPROM 0x20
+  gmac1 (eth1, WAN combo, usxgmii)             -> EEPROM 0x30
+  gmac2 (eth2, MxL86252 switch tree0 / lan1-6) -> EEPROM 0x38
+
+The EEPROM is preprogrammed once from the running system; the nvmem
+cells then make the driver read, and probe-defer on, the provider.
+---
+ arch/arm64/boot/dts/mediatek/mt7988a-bananapi-bpi-r4-pro.dtsi | 27 +++++++++++++++++++++++
+ 1 file changed, 27 insertions(+), 0 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/mediatek/mt7988a-bananapi-bpi-r4-pro.dtsi b/arch/arm64/boot/dts/mediatek/mt7988a-bananapi-bpi-r4-pro.dtsi
+index ab8c07e..05f6a7d 100644
+--- a/arch/arm64/boot/dts/mediatek/mt7988a-bananapi-bpi-r4-pro.dtsi
++++ b/arch/arm64/boot/dts/mediatek/mt7988a-bananapi-bpi-r4-pro.dtsi
+@@ -188,10 +188,14 @@
+ };
+ 
+ &gmac0 {
++	nvmem-cell-names = "mac-address";
++	nvmem-cells = <&lan_mac>;
+ 	status = "okay";
+ };
+ 
+ &gmac2 {
++	nvmem-cell-names = "mac-address";
++	nvmem-cells = <&mxl_mac>;
+ 	phy-mode = "10gbase-r";
+ 	phy-connection-type = "10gbase-r";
+ 	status = "okay";
+@@ -203,6 +207,11 @@
+ 	};
+ };
+ 
++&gmac1 {
++	nvmem-cell-names = "mac-address";
++	nvmem-cells = <&wan_mac>;
++};
++
+ &mdio_bus {
+ 	clock-frequency = <12500000>;
+ 
+@@ -424,6 +433,24 @@
+ 				address-width = <8>;
+ 				pagesize = <8>;
+ 				size = <256>;
++
++				nvmem-layout {
++					compatible = "fixed-layout";
++					#address-cells = <1>;
++					#size-cells = <1>;
++
++					lan_mac: macaddr@20 {
++						reg = <0x20 0x6>;
++					};
++
++					wan_mac: macaddr@30 {
++						reg = <0x30 0x6>;
++					};
++
++					mxl_mac: macaddr@38 {
++						reg = <0x38 0x6>;
++					};
++				};
+ 			};
+ 		};
+ 
+-- 
+2.39.2
