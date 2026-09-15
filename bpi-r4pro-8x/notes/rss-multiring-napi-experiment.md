@@ -708,3 +708,60 @@ Status: **RSS multi-ring NAPI port is functional and benchmarked at ~9.4 Gbit/s
 on the TFTP boot.** Remaining nice-to-haves: newer ethtool on-device, drop the
 MTKDBG-instrumented vs committed delta, and optionally restore HWLRO rings for
 full parity with frank-w's tree.
+
+### AIMARKER11 follow-up: corrected iperf — NOT bidir 9.4G, asymmetric 4.5R/9.4T + root cause of "RX fixed"
+
+Re-ran iperf from changwang (this box) as the client, banana as iperf3 server
+(`-D` on 10.222.1.2). Direction matters — the earlier 9.4 G was only banana TX.
+
+Corrected matrix (link 10G full both ends, changwang atlantic eth0 10G):
+
+| test | banana role | result |
+|---|---|---|
+| TCP 1S fwd | RX | **4.6 G** |
+| TCP 4S fwd | RX | 4.35-4.65 G |
+| TCP 1S rev | TX | **9.4 G** |
+| TCP 4S rev | TX | 9.39 G |
+| TCP 4S fwd (8 streams) | RX | 4.44 G |
+| UDP 1S @6G fwd | RX | 3.86 sent / 2.18 recv (43% drop) |
+| UDP 1S @9G fwd | RX | 3.90 sent / 2.22 recv (43% drop) |
+| TCP 4S bidirectional `-d` | RX+TX | ~4.68+4.67 = **~9.35 G link-saturated** |
+
+Rx-path (banana ingress, eth2) tops out ~4.5-4.7 G; Tx-path (banana egress,
+eth2) reaches 9.4 G. This is **not** CPU, IRQ, NAPI-kthread, or switch-drop
+limited:
+- All 4 PDMA/RSS IRQs fire and distribute RX (verified deltas on irq 106-109).
+- `effective_affinity` was CPU0-only for all eth IRQs; spread to 0/1/2/3 via
+  `/proc/irq/N/smp_affinity` -> **no improvement** (RX still 4.5-4.8 G).
+- NAPI is threaded (`eth->dummy_dev->threaded=1`); `napi/mtk_eth-0` kthreads
+  were pinned `Cpus_allowed_list:0`; spread via `taskset` -> still 4.5-4.8 G.
+- eth2 NAPI kthreads ran at only 5-16% CPU; `rx_overflow 0`, no pause/fc drops,
+  switch `TxAcmDroppedPkts` only 114 total.
+- Bidirectional test saturates ~10G (4.68+4.67) -> link is fine.
+
+Conclusion: batary egress = line-rate; banana ingress ≈ half-rate
+(~4.5-4.7 G) regardless of streams/IRQs/CPU — a PDMA/Soc RX ingress ceiling on
+this chip (not the RSS port). Do NOT quote "9.4 Gbit/s" as a bidirectional
+number; it is egress-only. Identify/round-trip further only if we desire
+ingress > ~4.7 G (that is a separate HW investigation, not a porting fault).
+
+**Why RX works in AI11 vs the AI10-era silence:** byte-diff vs the AI10 build
+(1bb8235c8c) shows only TWO patches were added by the rebase:
+- `979` stable-MAC (DTS/nvmem only, cosmetic)
+- `980` NAPI dummy-device reorder (driver)
+
+Everything else (970/973/974/975/976/977, 760-21..24) was already in the
+AI10-era tree. `975` (usxgmii link-flap) was present then too. Therefore the
+RX fix is **980**: it allocates `eth->dummy_dev` and calls `netif_napi_add`
+for tx+rx[0]+RSS rings BEFORE `register_netdev()`. With `threaded=1`, the NAPI
+runs on that dummy netdev's kthreads; in the old order netifd's immediate
+`ndo_open` of eth1 (WAN) hit `mtk_dma_init()`→`__xdp_rxq_info_reg()`
+(`Missing net_device from driver` WARN → -ENODEV), wedging the shared RX path
+while eth0/eth2 still *looked* up. 980 removes that window, so all 4 rings get
+their NAPI registered and RX actually drains. Confirmed: all 4 RSS IRQs now
+fire and the mgmt box is reachable over lan6/eth2.
+
+Diagnostics that keep working (760-24): `ethtool -x` shows toeplitz on
+eth0/1/2; `ethtool -l eth2` says Combined 4. On-device `-n rx-flow-hash` and
+`-L combined` still print "Not supported" — that's the OLD ethtool CLI on the
+banana, not the driver (which answers `-x`/`-l`/`-S`).
