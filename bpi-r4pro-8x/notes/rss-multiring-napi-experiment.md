@@ -789,3 +789,66 @@ eth1 = 1000Mb/s, LAN = one bridged 10G) so it cannot show RSS scaling.
 Final answer to "does RSS help": yes for load-spreading headroom (+confirmed all
 4 rings fire + split load), minimal for single-NIC raw ingress on this chip due
 to the PDMA ingress wall.
+
+### RSS threaded-NAPI kthread affinity is the real ingress knob — NOT IRQ affinity (2026-09-15, NAND prod)
+
+On a FRESH boot (no tuning) every eth IRQ reports `effective_affinity=1`
+(CPU0) AND all `napi/mtk_eth-0` kthreads spawn with `Cpus_allowed_list: 0`.
+Why: the RSS NAPI runs threaded on the dummy netdev (`eth->dummy_dev->threaded
+= 1`), and `netif_napi_add(...)->napi_kthread_create()` gives the kthread the
+dummy dev's affinity = the creating context (probe, on CPU0). RPS/IRQ masks
+don't move the kthreads.
+
+Measured ingress (changwang→banana, iperf3 -P4, fresh NAND prod boot):
+
+| config | banana ingress |
+|---|---|
+| default (all CPU0) | 4.83 G |
+| `taskset` NAPI kthreads across CPU0-3 | **5.42 G** (+12%) |
+| + also pin irq 106-109 → 1/2/4/8 | 5.26 G (IRQ pinning adds noise, no extra) |
+| egress (banana TX) | 9.4 G (unaffected) |
+
+Reproducible: default 4.83 vs spread 5.42-5.46 in repeat runs. IRQ-affinity
+spreading ALONE does nothing (earlier AIMARKER11 finding), because the work is
+in threaded-NAPI kthreads. **Fix persisted in `/etc/rc.local`** (and mirrored
+`config/v1-restore/rc.local.perf` + `backups/config-restore/rc.local.perf`):
+
+```
+echo 1|2|4|8 > /proc/irq/106|107|108|109/smp_affinity
+for p in /proc/[0-9]*; do
+  [ "$(cat $p/comm)" = "napi/mtk_eth-0" ] || continue
+  taskset -p $((1 << (i % 4) | 1)) $p
+  i=$((i+1))
+done
+```
+Also removed stale `echo c > /proc/irq/105/smp_affinity` — IRQ 105 no longer
+exists (v2 single-NAPI RX irq; rings are 106-109 now). Verified live: applying
+rc.local gives IRQ eff 1/2/4/8 + kthread 0/0-1/0,2/0,3 → 5.27 G.
+
+### Flashing to NAND keeping config — notes (2026-09-15)
+
+To keep `/etc/config` when installing: it lives in the NAND `rootfs_data`
+UBI volume (`/dev/ubi0_6` overlay). `sysupgrade` from the TFTP/RAM initramfs
+boot CANNOT see that overlay (root is tmpfs) — it would flash with a blank
+config. Correct procedure:
+1. `reboot` → autoboots NAND production (holds real /etc/config).
+2. `scp` fails on this build (`/usr/libexec/sftp-server` missing) — transfer
+   via `cat fw.itb | ssh root@… 'cat > /tmp/fw.itb'`, verify `md5sum` matches
+   the staged file.
+3. `setsid sysupgrade /tmp/fw.itb >/tmp/sysupgrade.log 2>&1 &` (NO `-n`).
+4. Confirmed after reboot: NAND `fit` replaced (revision → new build), overlay
+   `/dev/ubi0_6` still mounted, `/etc/config/network` intact (br-lan
+   10.222.1.2/24, wan eth1 dhcp).
+
+### Routing test teardown caution (2026-09-15)
+
+Set up odroid on a separate routed leg (lan4→`br-test` 10.222.50.1, odroid
+enp3s0 10.222.50.2, routes both ways, firewall accept) to measure router-path
+throughput when both legs aren't bridged. Learned: (1) OpenWrt nftables input
+chain has `policy drop` — a new unzoned bridge is REJECTED until you add
+`nft insert rule inet fw4 input iifname "br-test" jump accept_from_lan` +
+forward accepts; (2) flushing the ONLY static IP on a remote NFS-root host
+mid-session kills it stone dead (`ip addr flush` on an NFS client = no way
+back until reboot) — always add a second IP/leg BEFORE removing anything;
+(3) teardown = reverse everything incl. `taskset`/nft rules, so the device
+returns to a known-good boot state.
