@@ -878,3 +878,46 @@ Explicitly NOT ported (avoided):
 Note: both new patches were built (kernel target compile OK, mtk_eth_soc.o
 17:45) and verified `git apply` in sequence reproduces the compiled file
 exactly. Banana NOT rebooted.
+
+### Upstream sweep 2026-09-16 / 17 — what's new in OpenWrt, frank-w, forums; relevance to us
+
+Checked: openwrt/openwrt PRs, frank-w, BPI forum R4-Pro section, netdev.
+
+**OpenWrt main (all merged):**
+- PR #22612 (2026-03-27): **kernel DSA driver for MaxLinear MxL862xx/86282**
+  (dangowrt) — the upstream switch driver, incl. native 8-byte tag +
+  `mxl862xx-8021q`, bridge/vlan/lag/mirror, counters, firmware mgmt via
+  mdio/devlink, needs switch FW >= 1.0.78. This REPLACES our downstream
+  mxl driver/DTS approach eventually.
+- PR #21083 / #24900 / #23477 / #24642 / #24892 still merged (8X base,
+  as21xxx, MxL sync, assisted learning) as recorded earlier.
+
+**frank-w / forums relevant to OUR decisions:**
+- BPI forum "[BPI-R4] LRO/RSS etc upstreamed?" (#26071) — now long thread
+  confirming **HW-LRO on MT7988A is a packet-ordering bug**: engine aggregates
+  only ~0.02-0.05 % of a learned flow's segments, every pickup causes a TCP
+  retransmit (13-218 retransmits/GiB), the rest goes to RSS rings. Live
+  evidence that NOT enabling MTK_HWLRO in our port was the right call. If we
+  ever enable it: HWLRO rings advertise ~13.8K (MTK_MAX_LRO_RX_LENGTH) but are
+  backed by order-0 pages (page-pool) → DMA overrun/skb_over_panic risk; and
+  aggregated frames carry no gso_size (breaks forwarding of superframes).
+- meehien's PR #197 on frank-w/BPI-Router-Linux (7.1-main): **QDMA TX
+  use-after-free** corrupting forwarded traffic on R3+R4 (silent; "tx off no
+  longer required, +20%"). Lives in frank's 7.1-main reworked QDMA TX
+  (`MTK_QDMA_NUM_QUEUES=16` per-queue map). Our 6.18.44 base uses the OLD
+  upstream `mtk_tx_map/mtk_tx_map_info` (single queue + DSA per-port queue),
+  which does NOT match that code path → not affected, but re-check when/if we
+  ever adopt frank's QDMA rework.
+- New MXL switch FW **1.0.85** released 2026-08 (SinoVoIP, dsa/xfi variants);
+  forum: "lan works now, but speed always CPU-limited due to missing RSS/LRO"
+  → exactly the gap our multi-ring RSS port fills; also "5G/2.5G autoneg on
+  the as21xxx 10G combos" driver quirks keep surfacing.
+- netdev "Question: MII media mux" (2026-07-19, Bananapi upstream effort):
+  generic eth-mux (SFP/copper combo) still NOT merged upstream; phy_port*
+  docs are the stated future base. Our downstream gpio-hog/overlays
+  (`bootconf_extra` SFP-vs-PHY) are the pragmatic path until that lands.
+
+**Watch-list additions:** QDMA-TX-UAF patch on BPI-Router-Linux 7.1-main
+(only relevant if we adopt that TX rework); MXL 1.0.85 FW driver notes;
+upstream DSA mxl862xx driver in main → candidate to replace downstream mxl
+driver when rebasing onto main; MII-mux upstream status for combo support.
