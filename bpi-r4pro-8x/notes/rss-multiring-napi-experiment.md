@@ -852,3 +852,29 @@ mid-session kills it stone dead (`ip addr flush` on an NFS client = no way
 back until reboot) — always add a second IP/leg BEFORE removing anything;
 (3) teardown = reverse everything incl. `taskset`/nft rules, so the device
 returns to a known-good boot state.
+
+### Ported additional upstream v8 RSS bits as 760-25 / 760-26 (2026-09-16)
+
+Assessed the netdev "Add RSS and LRO support" v8 series for non-ported
+features. Ported (beneficial, safe, verified compile + git apply == built
+source):
+
+- **760-25** random RSS hash key: replace our hardcoded 0xfa,0x01,... key and
+  `i % rss_num` indir fill with `netdev_rss_key_fill()` +
+  `ethtool_rxfh_indir_default()` (upstream v8). Same ring semantics, removes
+  predictable flow->ring distribution / static-hash side channel.
+- **760-26** `.get_rx_ring_count` ethtool op: report MTK_RX_RSS_NUM (RSS) or
+  MTK_MAX_RX_RING_NUM (LRO) via the modern op (upstream moved GRXRINGS there,
+  e33bd8dd7f1f); complements 760-24 channels.
+
+Explicitly NOT ported (avoided):
+- `dma_size` MT7988 2K→4K (tx/fq) and 2K→1K (rx) — descriptor headroom on our
+  4-RSS-ring build is verified OK at 2K; upside is memory only, risk of RSS
+  ring starvation. Revisit only with upstream rationale or if 7.3G target demands.
+- HWLRO rings / NAPI_NUM=8 / DIM delay-IRQ rewrite / irq_done_mask→
+  MTK_RX_DONE_INT(eth,ring) refactor — entangled with the unmerged LRO work;
+  adopt wholesale when the series lands.
+
+Note: both new patches were built (kernel target compile OK, mtk_eth_soc.o
+17:45) and verified `git apply` in sequence reproduces the compiled file
+exactly. Banana NOT rebooted.
