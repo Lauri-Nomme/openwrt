@@ -921,3 +921,36 @@ Checked: openwrt/openwrt PRs, frank-w, BPI forum R4-Pro section, netdev.
 (only relevant if we adopt that TX rework); MXL 1.0.85 FW driver notes;
 upstream DSA mxl862xx driver in main → candidate to replace downstream mxl
 driver when rebasing onto main; MII-mux upstream status for combo support.
+
+### OpenWrt PR #24800 — 6.18.44 → 6.18.52 kernel bump (merged 2026-09-16)
+
+graysky2; merged by openwrt-bot Sep 16. **Directly relevant: our branch's base is
+6.18.44** (what we build/run); upstream main has now moved to **6.18.52**.
+
+Commits (11):
+- 6.18.45 / .46 / .47 / .48 / .49 / .50 / .51 / .52 bumps
+- `xt_FLOWOFFLOAD: always set the flow output ifindex`
+- `netfilter: fix flow offload with an unknown forward path` (new pending
+  `699-netfilter-flowtable-set-out-ifindex-when-the-forward.patch`)
+- d1/sunxi stale symbol cleanup
+
+Relevant to us:
+1. **nvmem fixed-layout refactor (6.18.45)**: `fixed-layout` became a driver on
+   the nvmem-layout bus (out of nvmem core); OpenWrt rebased its `mac-base`
+   handling (`804-nvmem-core-support-mac-base-fixed-layout-cells.patch`).
+   EPinci run-verified **mediatek/filogic incl. BPI R4 + R4 Pro** — MACs still
+   assigned, no EPROBE_DEFER stall (also fixed by PR #24924 driver-side
+   defer). This is the exact path our **979 stable-MAC/nvmem** patch uses;
+   worth re-validating on a 6.18.45+ rebase.
+2. **flowtable/xt_FLOWOFFLOAD offload fixes** (hauke): flow offload broke in
+   the bump; fixes here (bb `699`) landed. WAN/NAT forwarding depends on the
+   flowtable; if we rebase past 6.18.45, carry these.
+3. Known issues in-the-wild on the bump: kernel panic on zyxel nwa50ax
+   (jglooije), 6.18.52 "monster" of a rebase (1521 patches in -rc1). BPI-R4
+   reported fine (danpawlik/EPinci). robimarko (mediatek) promoted it
+   ("Rebased on top of main and merged!", comment-5695413833).
+
+Action when we next bump our base kernel: 6.18.44 → 6.18.52 upstream merge
+will need (a) dropping any upstreamed patches, (b) our 760-21/22/23/24/25/26 +
+979/980 refreshed for the nvmem-layout-bus + flowtable changes, (c) re-verify
+stable-MAC (nvmem) on first boot after bump.
