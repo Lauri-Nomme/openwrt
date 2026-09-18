@@ -1065,3 +1065,37 @@ Takeaways / next steps:
 - Recover from wedged box: serial console via /dev/ttyACM0 (minicom lock is
   advisory; open write-only + write \n + commands works). pstore check on a
   crashed box boots recovery automatically; reboot to return to production.
+### 9K end-to-end RCA RESOLVED: physical AS21010 PHY caps frames >1518 (2026-09-19)
+
+Goal: 9K iperf banana<->changwang. Method: uci mtu 9000 persisted + reboot so
+mtk RX rings are allocated at 9K at open (runtime `ip link set mtu` does NOT
+realloc rings, causing the earlier skb_over_panic).
+
+Findings (byte-counter / MIB / iperf evidence):
+- changwang eth0 (AQC113) at mtu 9000: TX byte counter grows ~1.49GB for an 8K
+  UDP flood => frames DO leave changwang at line rate.
+- banana lan6 RX shows only ~44/... of the 8K frames actually arrive
+  (+3.2MB RX vs +1.49GB changwang TX); MxL switch MtuExceedDiscardPkts = 0
+  (NOT a switch-side drop).
+- tcpdump on lan6 part of an 8K frame ("8028 > 1518 (invalid)") once, then none:
+  consistent with a flaky physical carry of oversized frames.
+- Reverse direction (banana TX -> changwang RX) jumbo also fails.
+- iperf: MSS1460 = 4.90 Gb/s; MSS8900 = 1.68 Mb/s (0 receiver). Hard cliff exactly
+  at 1518-byte frame size, BOTH directions.
+
+Physically between changwang and banana lan6:
+  changwang eth0 (AQC113 10G) -- SFP+/copper -- Aeonsemi AS21010JB1 PHY
+  (mdio-bus:18, fw 1.9.1) -- lan6 port@13 -- MxL86252 switch -- eth2/gmac2 cpu.
+
+CONCLUSION:
+- Our 9K driver port (max_mtu 9000, 760-27) is CORRECT: MTU 9000 accepted,
+  rx_buf_len sizing to 9K works when set before open, rings alloc 9K, mxl switch
+  port_change_mtu sets max_packet_len=9022. Nothing on the banana drops jumbo.
+- End-to-end 9K is BLOCKED by the physical segment changwang<->lan6 carrying
+  only <=1518B frames (Aeonsemi AS21010 / SFP+ copper path). Not a driver bug.
+- Runtime `ip link set mtu` on the mtk eth remains a real footgun (stale rings
+  => skb_over_panic) - still worth a fix upstream (realloc rings in change_mtu)
+  or documented as "set mtu via uci + reboot".
+
+Current state: uci mtu back to 1500 (br-lan/eth2/lan6), MTU applied live,
+SSH/ping clean, r177 production, wan=eth1.
