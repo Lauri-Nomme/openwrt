@@ -1026,3 +1026,42 @@ Likely causes to investigate before calling 9K usable:
 
 Next: verify 9100-byte frames actually traverse by tcpdump at both ends with
 both hosts at 9000 (isolate drop point) before enabling 9K in network cfg.
+
+### Follow-up: runtime 9K test PANICKED the kernel (RCA update) (2026-09-19)
+
+While repeating the 9K test (banana MTU 9000 via uci+network restart, changwang
+eth0 9000), the banana hit:
+
+    skbuff: skb_over_panic: len:8046 put:8046 tail:0x206e end:0xec0 dev:<NULL>
+    Kernel BUG at skb_panic+0x4c/0x50
+    Kernel panic - not syncing: Oops - BUG: Fatal exception in interrupt
+
+ => RX path put a 8046-byte frame into a ~0xec0 (3776B) buffer: the ring buffers
+    were sized <MTU again (stale rx_buf_len at alloc time), and the jumbo frame
+    overran -> panic.
+
+Consequences observed:
+- ramoops/pstore recorded the crash -> next `bootcmd` ran `pstore check` ->
+  boot_recovery -> hostname "OpenWrt" and a DEFAULT recovery /etc/config/network
+  that uses 'wan' on 'lan3' (recovery itb defaults differ from prod). Not a
+  config corruption; it's the recovery image defaults.
+- User then rebooted into production (wan=eth1 correct) and SSH went into a
+  "kex_exchange_identification: read: Connection reset by peer" loop even at
+  MSS<=1460. Root cause of reset loop: post-reboot lag / drops during the
+  network.settling (SSH established to a stale socket). Fixed by driving the
+  serial console (injecting uci + network restart via /dev/ttyACM0; wrote
+  through minicom's advisory lock) -> lan6/eth2/br-lan mtu back to 1500 and SSH
+  came back clean.
+
+Takeaways / next steps:
+- Runtime MTU change does NOT resize the 9K rings (mtk_change_mtu only sets
+  rx_buf_len; rings allocated at first open with stale size) -> 9K frames
+  overrun => skb_over_panic. frank's code has the same limitation; 9K only
+  works if MTU set before open (uci at boot) so rings allocate 9K.
+- To do 9K safely: configure mtu 9000 in /etc/config/network and BOOT once
+  (not runtime set) so rx ring frag_size becomes 9K at open. Retest on a boot
+  with mtu=9000 persisted, BOTH ends, then iperf. Optionally add a proper
+  ring-realloc on MTU change upstream.
+- Recover from wedged box: serial console via /dev/ttyACM0 (minicom lock is
+  advisory; open write-only + write \n + commands works). pstore check on a
+  crashed box boots recovery automatically; reboot to return to production.
