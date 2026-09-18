@@ -998,3 +998,31 @@ internal PB: with a mixed 1500/9000 MTU setup the whole system's RX rings
 are sized for the max → upstream forum reports 1-flow RX can DROP to ~2.2G
 in some jumbo configs; our earlier MTU-2000 test kept ingress high, so
 re-validate per-config after enabling real 9K.
+
+### 9K MTU flash + test attempt (2026-09-19) — 9K accepted but path broke
+
+Flashed r177 (9K-capable, 760-27) to NAND keeping config (sysupgrade no -n,
+cat-over-ssh transfer, md5 verified). Post-flash: kernel Fri Sep 18 01:46,
+rev r177-80d37447c0, config kept (br-lan 10.222.1.2/24), and
+`ip link set eth2 mtu 9000` now SUCCEEDS (was -EINVAL before 760-27).
+
+9K iperf attempt FAILED due to path, not driver:
+- Set banana eth2/lan6/br-lan = 9000 and changwang eth0 (10G atlantic) = 9000
+  (sudo available). Result: SSH kex "Connection reset by peer", 8K-ping 100%
+  loss. Jumbo frame end-to-end did NOT carry.
+- Restoring changwang eth0→1500 immediately restored SSH; banana stayed 9000
+  (SSH small-packet path fine one-sided).
+- Defused auto-reverts; banana back to persisted MTU (eth2=2004/lan6=2000/
+  br-lan=2000, lan2=1500). MTU-2000 reference still ~4.8 G.
+
+Likely causes to investigate before calling 9K usable:
+1. BQL / ring headroom: 9K RX needs descriptor room (SDL 9K) — ring sizing from
+   rx_buf_len=9216 only after mtk_change_mtu is invoked; if netifd sets MTU via
+   ethtool before change_mtu, rings may still be 2K.
+2. atlantic (changwang) 9K TX path / XGMII uplink between phy+mac may need
+   the 1.9.x as21xxx fw + inband; or the MxL/eth2 10gbase-r uplink needs a
+   matching peer MTU negotiation.
+3. bridge/DSÄ user-port MRU must match (lan6 mtu=9000 but br-lan/eth2 offsets).
+
+Next: verify 9100-byte frames actually traverse by tcpdump at both ends with
+both hosts at 9000 (isolate drop point) before enabling 9K in network cfg.
