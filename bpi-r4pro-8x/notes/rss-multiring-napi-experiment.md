@@ -1099,3 +1099,39 @@ CONCLUSION:
 
 Current state: uci mtu back to 1500 (br-lan/eth2/lan6), MTU applied live,
 SSH/ping clean, r177 production, wan=eth1.
+### 9K RCA FINAL (2026-09-19, corrected: Cat6 10GBASE-T, NOT SFP) — changwang TX bug
+
+User: "wtf @ physically. i'm not using SFP, i'm using normal 6-grade twisted pair cable."
+Correction: the cable/PHY path is fine. RCA is fully on changwang's AQC113 TX.
+
+Solid evidence chain (all measured):
+- banana SELF-WIRE 8K (10.222.1.200 on lan6): 2/2 received, 0% loss (banana MxL
+  switch + DSA + mtk RX/TX handle 8K perfectly on the wire, both directions).
+- changwang->banana 8K raw AF_PACKET (20 frames): 0 arrive at lan6 (byte
+  counters + lan6 MIB fcs/mtu_exceed all 0 -> frames never physically leave
+  changwang).
+- changwang->banana 1580B raw frames: 46 captured -> changwang CAN TX >1518 up
+  to ~1580; fails beyond somewhere.
+- reverse 9K iperf (banana TX -> changwang RX): 789 Mbit flows (banana TX fine,
+  changwang RX fine).
+- forward 9K iperf (changwang TX -> banana RX): 1.68 Mbit, 0 receiver (fails).
+- eth2/lan6 MAC counters: no fcs/long/short/checksum/mtu_exceed increments for
+  valid 9K ICMP/TCP -> not a MAC/SERDES/link issue.
+
+Diagnosis (changwang host, AQC113 Antigua, atlantic 7.1.12/fw 1.3.33):
+- aq_nic_set_mtu (disasm) = mov mtu -> nic->fields + ret. It NEVER programs a
+  TX max-frame/TPSMT register. Only RX per-TC pkt-buffer sizes exist in the ko.
+- => `ip link set mtu 9000` changes the Linux netdev MTU but the AQC113 silicon
+  still refuses to transmit frames ~>1518B. Raw/non-TSO jumbo TX silently
+  drops; the wire never sees them. TSO/GSO doesn't help (no reassemble > MSS
+  either since TX check at the MAC).
+
+Impact: our 9K driver port on the banana is CORRECT and READY; end-to-end 9K is
+blocked by changwang's atlantic driver not setting TX max frame size on MTU
+change. Options:
+  1) fix atlantic driver (add hw_atl_tpsmt set in aq_nic_set_mtu / use mainline
+     atlantic with jumbo support) on changwang;
+  2) test 9K banana<->banana only (works);
+  3) swap changwang NIC or use a different 9K-capable peer.
+Current state: uci MTU 1500 on banana (restored), changwang eth0 1500, SSH/ping
+fine. No banana regression.
