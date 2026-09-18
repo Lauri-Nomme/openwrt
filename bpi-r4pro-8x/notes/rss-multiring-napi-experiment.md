@@ -971,3 +971,30 @@ Tested MTU 2000 (safety: 15-min auto-revert armed + defused after success):
 
 Open task: port `999-2726-net-ethernet-mtk_eth_soc-add-9k-jumbo-frame-support.patch`
 from mtk feed for true 9K MTU (16K xmac RX config, 9K descriptor room).
+
+### 9K jumbo frame support ported — 760-27 (2026-09-18)
+
+Measured earlier: MTU 2000 (max without the 9K support) gave +20-25% banana
+ingress (~5.3 → 6.4-6.7 G) because fewer/larger NAPI packets. Full 9K needs
+the driver change (prior: eth2 rejects MTU >2000).
+
+Ported frank-w jumbo series onto our 6.18.44 RSS tree as **760-27
+(rx-buf-len-and-9k-jumbo-mtu.patch)**:
+- dynamic `eth->rx_buf_len` (1536/2048/9216) recomputed in mtk_change_mtu
+  from max GMAC MTU; rings sized from it.
+- `mtk_set_mcr_max_rx`: netisys-v3 XGMII MACs (mac2) program
+  `XMAC_RX_CFG2` (via `MTK_XMAC_RX_CFG2`/`MTK_XMAC_MAX_RX_MASK`) for MTU up
+  to `MTK_MAX_RX_LENGTH_9K` (9216); non-xgmii keep MAC_MCR encoder.
+- new `MTK_NETSYS_RX_9K` capability, added to MT7988_CAPS.
+- per-open `netdev->max_mtu` (9K on xgmii w/ cap, else 2K) replacing static
+  set in mtk_add_mac.
+- `mtk_max_buf_alloc(size)` (was fixed LRO size); `mtk_max_frag_size/buf_size`
+  take `eth`.
+- forward-declared `mtk_set_mcr_max_rx` (defined after mtk_mac_config here).
+
+Compile-verified: target/linux/compile clean (0 errors).
+To use: set MTU up to 9000 on the 10G XFI ports (eth2/lan6). Note the
+internal PB: with a mixed 1500/9000 MTU setup the whole system's RX rings
+are sized for the max → upstream forum reports 1-flow RX can DROP to ~2.2G
+in some jumbo configs; our earlier MTU-2000 test kept ingress high, so
+re-validate per-config after enabling real 9K.
