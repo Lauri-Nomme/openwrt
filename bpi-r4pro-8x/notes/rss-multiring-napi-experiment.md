@@ -954,3 +954,20 @@ Action when we next bump our base kernel: 6.18.44 → 6.18.52 upstream merge
 will need (a) dropping any upstreamed patches, (b) our 760-21/22/23/24/25/26 +
 979/980 refreshed for the nvmem-layout-bus + flowtable changes, (c) re-verify
 stable-MAC (nvmem) on first boot after bump.
+
+### Jumbo MTU 2000 on 10G path — measured + persisted (2026-09-17)
+
+MT7988 driver hard-rejects MTU > 2000 on eth2 (`Invalid argument` at 4000/2048;
+accepts 2000). So no 9K without the mtk-SDK `Add-9k-jumbo-frame-support` patch
+(needs MTK_MAX_RX_LENGTH_9K + DMA/ring/xmac setup).
+
+Tested MTU 2000 (safety: 15-min auto-revert armed + defused after success):
+- banana ingress (changwang→banana, iperf3 -P4):  **~5.3 G @ MSS1448 →
+  ~6.4-6.7 G @ MSS1800 (+20-25%)** — fewer NAPI packets on the CPU/RX-limited
+  ingress path.
+- Persisted in /etc/config/network: `eth2`, `lan6`, `br-lan` `option mtu '2000'`
+  (device sections), verified post `network restart` and in the uci file.
+- Caveat: gain is on the LAN/10G side; real WAN NAT path is still 1G.
+
+Open task: port `999-2726-net-ethernet-mtk_eth_soc-add-9k-jumbo-frame-support.patch`
+from mtk feed for true 9K MTU (16K xmac RX config, 9K descriptor room).
