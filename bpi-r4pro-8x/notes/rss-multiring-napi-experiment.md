@@ -1135,3 +1135,31 @@ change. Options:
   3) swap changwang NIC or use a different 9K-capable peer.
 Current state: uci MTU 1500 on banana (restored), changwang eth0 1500, SSH/ping
 fine. No banana regression.
+### 9K crash FIXED (r182-042ac7380d) via patches-6.18/760-28 (2026-09-19)
+
+Root causes of the recurring `skb_over_panic` (len~9K, end:0xec0=3776B) in
+mtk_poll_rx when jumbo frames hit the CPU RX path:
+
+1. PDMA SDL (max RX frame) register was never programmed -> DMA silently
+   dropped >1518 frames (pre-crash symptom: 8K arrived at lan6/switch but
+   never reached the CPU).
+2. page_pool RX path uses order-0 single PAGE_SIZE buffers; 9K frames cannot
+   fit -> skb_put(pktlen) overran (end:0xec0 ~ 3776) -> kernel panic.
+
+Fix (new patch 760-28, survives clean rebuilds):
+- mtk_hwlro_rx_init + mtk_change_mtu: program reg_map->pdma.rx_cfg
+  (MTK_PDMA_LRO_SDL + rx_buf_len) << MTK_RX_CFG_SDL_OFFSET (netsys_v3+).
+- mtk_page_pool_enabled(): return false when any netdev mtu > MTK_PP_MAX_BUF_SIZE
+  -> RX falls back to 9K-capable mtk_max_buf_alloc() frag buffers.
+
+Validation on r182-042ac7380d (clean build from patch, config preserved, MTU 9000
+uci, no sysupgrade -n):
+- changwang 8K raw blast x30 into banana lan6/eth2: 8K frames (0x1f5c=8028)
+  SEEN on eth2 (cpu), dmesg skb_over_panic/panic count = 0, uptime stable.
+  Before fix this panicked instantly.
+- config preserved across flash (wan=eth1, lan=10.222.1.2), pstore cleared,
+  boots to production.
+
+Note: end-to-end 9K iperf still blocked by changwang AQC113 TX cap (~1518) and
+precision (10.222.1.99, 1G) being down; banana is now 9K-RX-crash-safe. Tested
+MTUs restored to 1500 after validation.
