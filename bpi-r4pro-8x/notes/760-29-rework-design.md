@@ -260,3 +260,103 @@ C5 Net effect: rings size safety (no skb_over_panic on runtime MTU change), no l
   start 1500 running, `ip link set mtu 9000` live, then 8K ping both ways + iperf; then back to
   1500 live; watch dmesg for skb_over_panic, ring realloc log line, MAC max-rx; no link flap
   observed (link counters unchanged), no WED reset in trace.
+
+---
+
+## 7. ADDENDUM — MTK's own implementation (authoritative source; frank-derived from it) — 2026-09-19
+
+Cloned upstream mirror `mediatek/mtk-openwrt-feeds` (github.com/mediatek/mtk-openwrt-feeds),
+25.12 branch, pathes-6.12. The runtime-realloc work = **TWO patchsets**:
+
+- `999-eth-33-mtk_eth_soc-add-dynamic-rx-buffer-adjustment-support.patch` (Mason Chang,
+  Dec 11 2025, v3) — dynamic rx_buf_len; **origin of the design**.
+- `999-eth-50-mtk_eth_soc-add-netdev-restart-work.patch` (Mason Chang, May 28 2026, v1)
+  — the actual realloc = "netdev restart work". frank's `rx_buf_len_work` is this, refined.
+- `999-eth-31-...-add-9k-jumbo-frame-support.patch` adds the XMAC_RX_CFG2 jumbo encoder +
+  `MTK_MAX_RX_LENGTH_UNIT 1024` + `MAC_MCR_MAX_RX_JUMBO(...)` for non-xgmii.
+- MTK MT7988 DOES enable HWLRO (`999-eth-10-add-hw-lro-support.patch` + `MTK_HWLRO` cap);
+  MTK's SDL write lives in `mtk_hwlro_rx_init` (999-eth-33 hunk: `MTK_PDMA_LRO_SDL + eth->rx_buf_len`).
+  => frank COPIED the SDL-in-hwlro placement from MTK. Both MTK and frank therefore rely on
+  HWLRO being enabled on 7988 for SDL to track rx_buf_len. **OUR tree has NO MTK_HWLRO on
+  7988 ⇒ SDL-in-hwlro does not run ⇒ we MUST set SDL on a non-hwlro path. (confirms §2.6/R1)**
+
+### 7.1 MTK's exact change_mtu (999-eth-33 + 999-eth-50 combined)
+```
+WRITE_ONCE(dev->mtu, new_mtu);
+rx_buf_len = eth->rx_buf_len;                      // remember old
+max_mtu = mtk_max_gmac_mtu(eth);
+for i in ppe: mtk_ppe_update_mtu(eth->ppe[i], max_mtu);
+length = max_mtu + MTK_RX_ETH_HLEN;
+if (rcu_access_pointer(eth->prog) && length > MTK_PP_MAX_BUF_SIZE) return -EINVAL;
+if (length <= MTK_MAX_RX_LENGTH) eth->rx_buf_len = MTK_MAX_RX_LENGTH;   // 1536
+else eth->rx_buf_len = DIV_ROUND_UP(length, MTK_MAX_RX_LENGTH_UNIT) * MTK_MAX_RX_LENGTH_UNIT;
+if (eth->rx_buf_len != rx_buf_len && refcount_read(&eth->dma_refcnt) > 0) {
+    netdev_info("RX buffer length changed (%u -> %u), scheduling netdevs restart");
+    schedule_work(&eth->netdev_restart_work);
+}
+```
+NOTES:
+- MTK keeps the rx_buf_len WRITE in change_mtu (does NOT derive at ring-alloc);
+  frank moved the derivation to mtk_dma_init. frank's is strictly safer/invariant-preserving.
+- MTK removed the early `mtk_set_mcr_max_rx(mac, length)` from change_mtu (999-eth-33 line 124
+  `-`). This CONFIRMS my §2.1/§2.9 concern: widening a MAC's max-rx before rings grow is
+  wrong; MTK only sets MAC max-rx via mtk_mac_config() at open/phylink (999-eth-33 line 30/31,
+  `mtk_set_mcr_max_rx(mac, eth->rx_buf_len)`). Our 760-29 currently keeps that early call —
+  the rework MUST drop it (matches my existing risk R2-C1b).
+- MTK's restart_work does NOT set MTK_RESETTING and uses full mtk_stop/mtk_open (refcount-
+  guarded; phylink toggled). frank's worker adds MTK_RESETTING + rings-only + shrink-before/
+  grow-after + set_max_rx_running — a safety hardening on top of MTK's simpler approach.
+
+### 7.2 MTK's mtk_netdev_restart_work (999-eth-50) — the "before frank" version
+```
+static void mtk_netdev_restart_work(struct work_struct *work) {
+    eth = container_of(work, struct mtk_eth, netdev_restart_work);
+    unsigned long restart = 0; int i;
+    rtnl_lock();
+    for running netdevs: mtk_stop(netdev[i]); __set_bit(i,&restart);
+    for i in restart: if (mtk_open(netdev[i])) { netif_alert("Netdev restart failed, closing...");
+                          dev_close(netdev[i]); }
+    rtnl_unlock();
+}
+INIT_WORK in probe; cancel_work_sync in cleanup; new field netdev_restart_work.
+```
+Risks MTK's version has (that frank fixed, our doc already covers): no MTK_RESETTING =>
+TX could still xmit into rings being freed during the stop window (mitigated only by
+netif_tx_disable inside mtk_stop but not across the whole swap); full phylink stop/start
+per netdev = link flap; shrink-vs-grow MAC ordering implicit (stop drops all, reopen re-adds
+at new len; grow is safe because rx_buf_len set before open; shrink also safe because rings
+alloc happen at open with new len — but MTK never DID explicitly narrow MACs-before-rings,
+it relies on stop→open ordering). frank's refinement (R2.shrink-before/grow-after) is the
+stronger form. This is direct evidence for conclusions C2/C3.
+
+### 7.3 MTK jumbo XMAC/non-xgmii encoder (999-eth-31) — for completeness/port
+```
+mtk_set_mcr_max_rx non-xgmii:
+  mcr_new &= ~(MAC_MCR_MAX_RX_MASK | MAC_MCR_MAX_RX_JUMBO_MASK);
+  if (val<=1518) 1518; elif <=1536 1536; elif <=1552 1552;
+  else { mcr |= MAC_MCR_MAX_RX_2048; mcr |= MAC_MCR_MAX_RX_JUMBO(DIV_ROUND_UP(val, UNIT)); }
+xgmii (netsys_v3, mac.id != GMAC1):
+  if (val < MTK_MAX_RX_LENGTH_9K) mcr = FIELD_PREP(MTK_XMAC_MAX_RX_MASK, val);
+  else mcr = MTK_MAX_RX_LENGTH_9K;
+```
+=> Our 760-27's set_mcr_max_rx (2048-bucket, no JUMBO bits) is a subset; for full parity with
+MTK we may want the MAC_MCR_MAX_RX_JUMBO encoder on non-xgmii(2.5G) ports — note for r4-pro-8x
+our non-xgmii ports (lan1-5) are 1G so it only matters if a 2.5G r4/lite port is used. Capture
+as optional enhancement, not required for 8x.
+
+### 7.4 MAX_RX_LENGTH_UNIT semantics
+MTK_MAX_RX_LENGTH_UNIT = 1024, "GMAC jumbo length field granularity". Our bucket (1536/2048/
+9216) already picks values divisible by 1024 except 1536 which is MTK's own "le" special-case
+(MTK keeps 1536 when <=MTK_MAX_RX_LENGTH, else units of 1024). So adopting MTK's exact formula
+gives: 1500→1536; 2000→2048; 9000→9216 — IDENTICAL to our bucket. Confirms §4 C4: keep ours or
+adopt MTK's; they coincide on all our sizes.
+
+### 7.5 net new for the doc — three firm updates
+U1 (was R2/C1b, now authoritative): REMOVE the early `mtk_set_mcr_max_rx(mac, length)` from
+   change_mtu — MTK removed it; MAC max-rx only via mac_config/worker.
+U2 (was R1, now authoritative): SDL is hwlro-gated in BOTH MTK and frank (their 7988 has
+   HWLRO). OUR no-HWLRO 7988 must set SDL on a non-hwlro path (dma_init netsys_v3 or in worker).
+   This is the single most important divergence to NOT blindly copy.
+U3 (frank vs MTK lineage confirmed): frank 7.3 = MTK 999-eth-33/50 + hardening (derive-at-
+   ring-alloc, MTK_RESETTING, rings-only worker, shrink-before/grow-after, set_max_rx_running).
+   => implementing the doc's §5 design = adopting the IMPROVED, post-MTK design.
