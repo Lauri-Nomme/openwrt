@@ -1270,3 +1270,62 @@ now fixed in the source tree (no reboot/flash done):
   the bare 760-27/760-28 state and reproduces the built source exactly.
 
 Committed 3ae8cff43f (branch bpi-r4pro-8x-v2-multiring-napi).
+### Upstream / PR / forums sweep (2026-09-19)
+
+**openwrt/openwrt:**
+- main still on 6.18.52 (verify: include target/linux/generic/kernel-6.18).
+- PR #24569 "add Banana Pi BPI-R4 Pro [8x, 4e]" (base support): OPEN, +39723/-76,
+  REVIEW_REQUIRED. Author stripped the MTK-feeds driver patches a reviewer
+  rejected ("none work out of the box; unnecessary"); it is now device/DTS/uboot
+  only. => our 760-21..29 mtk driver work stays downstream, as expected.
+- PR #24279 "mt7988 ramoops/pstore layout": OPEN, kernel-side change ACCEPTED
+  upstream (AngeloGioacchino, v7.3-next/dts64); scoped to bpi-r4 (NOT
+  bpi-r4-pro-8x variants) - matches our pstore-recovery behaviour; upstream
+  lore 20260915.35722.566918.
+- Merged recently: #24900 as21xxx phy, #24892 mxl assisted learning,
+  #24973 fwnode phylink PCS, #24800 6.18.45->6.18.52, #21083 r4pro 8x base.
+- Open: #24990 as21xxx hwmon temp, #24887 RTL826x PHY hardening, #24073 r4 I2C1
+  overlay, #25198 r2 DS3231 overlay, #24279 ramoops.
+
+**frank-w/BPI-Router-Linux:**
+- meehien PR #197 "Fix UAF in QDMA TX path" (silent forwarded-traffic
+  corruption, +20% when tx off removed): MERGED into 7.1-main 2026-07-30.
+  NOTE: our 6.18.44 base uses old upstream single-queue mtk_tx_map (not the
+  reworked QDMA) => not affected, re-check if adopting their TX rework.
+- **jumbo tracking is now on dedicated branches: 6.18-jumbo, 7.2-jumbo,
+  7.3-jumbo.**
+- IMPORTANT: 7.3-jumbo's mtk_change_mtu now has the RUNTIME ring-realloc that
+  frank/MTK landed - but as a DEDICATED worker `rx_buf_len_work` (NOT our
+  coarse reuse of mtk_pending_work/FE reset):
+    - mtk_rx_buf_len(eth) derives required buf len from max GMAC MTU.
+    - if dma_refcnt>0 && required != current -> schedule rx_buf_len_work.
+    - worker: set MTK_RESETTING, netif_tx_disable on running devs,
+      shrink-first/widen-later via mtk_set_max_rx_running, mtk_rings_stop()
+      + mtk_rings_start() (light DMA-only, NAPI preserved), error path
+      closes netdevs with refcount dance.
+  => our 760-29 does the job but with the HEAVY FE-reset (mtk_pending_work).
+  UPGRADE PATH: replace 760-29's mtk_pending_work reuse with a dedicated
+  rx_buf_len_work + mtk_rings_stop/start + mtk_set_max_rx_running, matching
+  frank 7.3-jumbo. Same category as MTK's own runtime-realloc feed patches
+  (git01 mtk-openwrt-feeds a7ee029fd / 54f68b94df).
+
+**BPI forum:**
+- #26071 LRO/RSS upstreamed?: HWLRO on MT7988 = packet-ordering bug, ~0.02-0.05%
+  agg, causes TCP retransmits; RSS is what matters for 10G. Confirms our
+  no-HWLRO choice. Also: HWLRO rings advertise ~13.8K into order-0 page-pool ->
+  overrun risk (the exact class we fixed).
+- #17248 jumbo frames: MTK released runtime-9K patch (3ca030585a) that raises
+  XMAC_RX_CFG2 runtime; mt753x GMACCR MAX_RX_JUMBO register detail; mixed
+  MTU jumbo + flowtable/checksum-offload issues above 2K (wteiken) - some
+  setups need TX CSUM off disabled when routing jumbo->1500.
+- #27340 "Flowtable corrupts large TCP on r4-pro-8x": on 24.10 stock,
+  /etc/flowtable.conf incl. eth0/eth2 in devices list breaks SSH/large TCP;
+  fix: drop eth0/eth2 (DSA conduits) from the flowtable devices, or rm
+  flowtable.conf. WATCH: our 9K + flow offload may hit this; keep the
+  devices list to real ports.
+- #27736 "Patches for BPI-R4 & R4Pro" (meehien): MxL switch 1.0.70, BE14/pcie
+  fixes, AS21011 WAN link speedup.
+
+ACTION (pending decision, no build done this pass):
+- Upgrade 760-29 to frank's dedicated rx_buf_len_work design (faster, safer
+  than full FE reset). All else is watch-list only.
