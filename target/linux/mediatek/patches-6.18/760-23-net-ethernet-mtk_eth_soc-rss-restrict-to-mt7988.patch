@@ -13,10 +13,9 @@ MTK_RSS and has the per-ring PDMA interrupts. All other filogic SoCs keep
 the exact upstream single-NAPI/irq path.
 
 Signed-off-by: Lauri Nomme <lauri.nomme@gmail.com>
-diff --git a/drivers/net/ethernet/mediatek/mtk_eth_soc.c b/drivers/net/ethernet/mediatek/mtk_eth_soc.c
 --- a/drivers/net/ethernet/mediatek/mtk_eth_soc.c
 +++ b/drivers/net/ethernet/mediatek/mtk_eth_soc.c
-@@ -6368,7 +6368,6 @@ static const struct mtk_soc_data mt7629_data = {
+@@ -6368,7 +6368,6 @@ static const struct mtk_soc_data mt7629_
  static const struct mtk_soc_data mt7981_data = {
  	.reg_map = &mt7986_reg_map,
  	.ana_rgc3 = 0x128,
@@ -24,7 +23,7 @@ diff --git a/drivers/net/ethernet/mediatek/mtk_eth_soc.c b/drivers/net/ethernet/
  	.caps = MT7981_CAPS,
  	.hw_features = MTK_HW_FEATURES,
  	.required_clks = MT7981_CLKS_BITMAP,
-@@ -6399,7 +6398,6 @@ static const struct mtk_soc_data mt7981_data = {
+@@ -6399,7 +6398,6 @@ static const struct mtk_soc_data mt7981_
  static const struct mtk_soc_data mt7986_data = {
  	.reg_map = &mt7986_reg_map,
  	.ana_rgc3 = 0x128,
@@ -32,7 +31,6 @@ diff --git a/drivers/net/ethernet/mediatek/mtk_eth_soc.c b/drivers/net/ethernet/
  	.caps = MT7986_CAPS,
  	.hw_features = MTK_HW_FEATURES,
  	.required_clks = MT7986_CLKS_BITMAP,
-diff --git a/drivers/net/ethernet/mediatek/mtk_eth_soc.h b/drivers/net/ethernet/mediatek/mtk_eth_soc.h
 --- a/drivers/net/ethernet/mediatek/mtk_eth_soc.h
 +++ b/drivers/net/ethernet/mediatek/mtk_eth_soc.h
 @@ -1250,11 +1250,11 @@ enum mkt_eth_capabilities {

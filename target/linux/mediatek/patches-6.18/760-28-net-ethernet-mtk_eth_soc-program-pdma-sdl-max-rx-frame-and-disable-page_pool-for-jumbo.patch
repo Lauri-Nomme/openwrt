@@ -21,11 +21,9 @@ Fixes skb_over_panic (len:~9K, end:0xec0) in mtk_poll_rx for 9K traffic.
 
 Signed-off-by: Lauri Nomme <lauri.nomme@gmail.com>
 ---
-diff --git a/drivers/net/ethernet/mediatek/mtk_eth_soc.c b/drivers/net/ethernet/mediatek/mtk_eth_soc.c
-index fd0832e..22d4199 100644
 --- a/drivers/net/ethernet/mediatek/mtk_eth_soc.c
 +++ b/drivers/net/ethernet/mediatek/mtk_eth_soc.c
-@@ -2109,6 +2109,19 @@ static void mtk_update_rx_cpu_idx(struct mtk_eth *eth, struct mtk_rx_ring *ring)
+@@ -2109,6 +2109,19 @@ static void mtk_update_rx_cpu_idx(struct
  
  static bool mtk_page_pool_enabled(struct mtk_eth *eth)
  {
@@ -45,7 +43,7 @@ index fd0832e..22d4199 100644
  	return mtk_is_netsys_v2_or_greater(eth);
  }
  
-@@ -3240,6 +3253,17 @@
+@@ -3240,6 +3253,17 @@ static int mtk_hwlro_rx_init(struct mtk_
  	mtk_w32(eth, (MTK_HW_LRO_TIMER_UNIT << 16) | MTK_HW_LRO_REFRESH_TIME,
  		MTK_PDMA_LRO_ALT_REFRESH_TIMER);
  
@@ -63,7 +61,7 @@ index fd0832e..22d4199 100644
  	/* set HW LRO mode & the max aggregation count for rx packets */
  	lro_ctrl_dw3 |= MTK_ADMA_MODE | (MTK_HW_LRO_MAX_AGG_CNT & 0xff);
  
-@@ -4933,6 +4957,17 @@
+@@ -4933,6 +4957,17 @@ static int mtk_change_mtu(struct net_dev
  	else
  		return -EINVAL;
  
@@ -80,3 +78,4 @@ index fd0832e..22d4199 100644
 +
  	return 0;
  }
+ 

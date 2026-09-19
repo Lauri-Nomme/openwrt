@@ -21,11 +21,9 @@ open.
 
 Signed-off-by: Lauri Nomme <lauri.nomme@gmail.com>
 ---
-diff --git a/drivers/net/ethernet/mediatek/mtk_eth_soc.c b/drivers/net/ethernet/mediatek/mtk_eth_soc.c
-index 22d4199..1a337f7 100644
 --- a/drivers/net/ethernet/mediatek/mtk_eth_soc.c
 +++ b/drivers/net/ethernet/mediatek/mtk_eth_soc.c
-@@ -4932,6 +4932,7 @@ static int mtk_change_mtu(struct net_device *dev, int new_mtu)
+@@ -4932,6 +4932,7 @@ static int mtk_change_mtu(struct net_dev
  	int length = new_mtu + MTK_RX_ETH_HLEN;
  	struct mtk_mac *mac = netdev_priv(dev);
  	struct mtk_eth *eth = mac->hw;
@@ -33,7 +31,7 @@ index 22d4199..1a337f7 100644
  	int max_mtu, i;
  
  	if (rcu_access_pointer(eth->prog) &&
-@@ -4947,6 +4948,8 @@ static int mtk_change_mtu(struct net_device *dev, int new_mtu)
+@@ -4947,6 +4948,8 @@ static int mtk_change_mtu(struct net_dev
  	for (i = 0; i < ARRAY_SIZE(eth->ppe); i++)
  		mtk_ppe_update_mtu(eth->ppe[i], max_mtu);
  
@@ -42,7 +40,7 @@ index 22d4199..1a337f7 100644
  	length = max_mtu + MTK_RX_ETH_HLEN;
  	if (length <= MTK_MAX_RX_LENGTH)
  		eth->rx_buf_len = MTK_MAX_RX_LENGTH;
-@@ -4968,6 +4971,23 @@ static int mtk_change_mtu(struct net_device *dev, int new_mtu)
+@@ -4968,6 +4971,23 @@ static int mtk_change_mtu(struct net_dev
  			eth->soc->reg_map->pdma.rx_cfg);
  	}
  
