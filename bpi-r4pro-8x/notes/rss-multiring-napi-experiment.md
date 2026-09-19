@@ -1254,3 +1254,19 @@ Fix applied on banana:
 - NOTE: restore.sh does NOT push /etc/config/odhcpd; odhcpd is disabled via its
   init script already (persists). If a full reflash+restore ever brings DHCP
   back, re-check odhcpd + dnsmasq enable.
+### Runtime MTU change ring-realloc DONE - patches-6.18/760-29 (2026-09-19)
+
+The previously-flagged footgun ("runtime MTU change does NOT resize rings") is
+now fixed in the source tree (no reboot/flash done):
+
+- mtk_change_mtu: track old rx_buf_len; when it actually changes on a running
+  interface (and no reset is in flight), schedule mtk_pending_work - the FE/DMA
+  reset worker - which stops all netdevs, re-inits DMA (fresh ring alloc at the
+  new rx_buf_len) and reopens them.
+- Makes live `ip link set mtu 9000` (and back to 1500) safe: rings are resized,
+  so jumbo frames no longer overrun old smaller buffers (skb_over_panic).
+- Skipped if MTK_RESETTING already set or if the selected size didn't change.
+- Compile-verified (mtk_eth_soc.o rebuilt, 0 errors). Patch applies cleanly to
+  the bare 760-27/760-28 state and reproduces the built source exactly.
+
+Committed 3ae8cff43f (branch bpi-r4pro-8x-v2-multiring-napi).
