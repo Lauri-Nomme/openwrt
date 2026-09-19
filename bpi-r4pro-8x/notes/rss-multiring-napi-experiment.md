@@ -1163,3 +1163,27 @@ uci, no sysupgrade -n):
 Note: end-to-end 9K iperf still blocked by changwang AQC113 TX cap (~1518) and
 precision (10.222.1.99, 1G) being down; banana is now 9K-RX-crash-safe. Tested
 MTUs restored to 1500 after validation.
+### 9K VALIDATED on r182 (2026-09-19): banana 9K works; switch CPU->1G port quirk
+
+Precision (10.222.1.99, lan3 1G) restored. Full matrix:
+
+- precision <-> changwang 8K peer-to-peer: WORKS (0% loss, ~0.4ms) -> switch
+  forwards 9K between 1G/10G egress ports fine.
+- banana <-> changwang 9K: WORKS both directions (banana pings changwang 8K:
+  round-trip ~0.4-0.6ms OK; iperf reverse flows). Banana CPU RX+TXR 9K to 10G
+  port validated end-to-end.
+- precision -> banana CPU 8K echo request: ARRIVES at banana br-lan + banana
+  EMITS 8K echo reply (seen on br-lan, both frames length 8042). No panic.
+  BUT precision's NIC never receives the reply (RX bytes +1643 only): frames
+  dropped on the banana-CPU -> switch -> 1G precision port leg.
+- banana -> precision 8K: 0% (reply never reaches precision).
+  -> FAILING leg is exclusively CPU <-> 1G-port (lan3) egress on the MxL
+     switch, while CPU <-> 10G-port (lan6) and peer <-> peer 1G/10G both carry
+     9K. Likely a switch CPU-port-to-slow-port egress/buffering limitation
+     (no per-port egress MTU in the mxl862xx driver; only global max_packet_len
+     which is 9022). Not a mtk_eth_soc driver issue.
+
+Conclusive: mtk_eth_soc 9K fix (760-28) is CORRECT and crash-free (0 panics,
+uptime stable, 8K handled at CPU). Remaining 9K-to-1G limitation is a switch
+CPU-port egress hardware quirk for slow (1G) egress ports.
+MTUs restored to 1500. r182-042ac7380d running.
