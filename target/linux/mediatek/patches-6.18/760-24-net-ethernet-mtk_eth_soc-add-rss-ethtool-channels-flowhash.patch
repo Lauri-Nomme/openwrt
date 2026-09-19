@@ -16,10 +16,9 @@ Complete the RSS ethtool surface for MT7988 (multi-ring NAPI/RSS build):
 Non-RSS SoCs keep combined_count=1 and are unchanged.
 Signed-off-by: Lauri Nomme <lauri.nomme@gmail.com>
 ---
-diff --git a/drivers/net/ethernet/mediatek/mtk_eth_soc.c b/drivers/net/ethernet/mediatek/mtk_eth_soc.c
 --- a/drivers/net/ethernet/mediatek/mtk_eth_soc.c
 +++ b/drivers/net/ethernet/mediatek/mtk_eth_soc.c
-@@ -5273,6 +5273,24 @@
+@@ -5242,6 +5242,24 @@ static int mtk_get_rxnfc(struct net_devi
  			ret = 0;
  		}
  		break;
@@ -44,7 +43,7 @@ diff --git a/drivers/net/ethernet/mediatek/mtk_eth_soc.c b/drivers/net/ethernet/
  	case ETHTOOL_GRXCLSRLCNT:
  		if (dev->hw_features & NETIF_F_LRO) {
  			struct mtk_mac *mac = netdev_priv(dev);
-@@ -5362,8 +5380,7 @@
+@@ -5331,8 +5349,7 @@ static int mtk_get_rxfh(struct net_devic
  	struct mtk_rss_params *rss_params = &eth->rss_params;
  	int i;
  
@@ -54,7 +53,7 @@ diff --git a/drivers/net/ethernet/mediatek/mtk_eth_soc.c b/drivers/net/ethernet/
  
  	if (rxfh->key) {
  		memcpy(rxfh->key, rss_params->hash_key,
-@@ -5461,6 +5478,35 @@
+@@ -5430,6 +5447,35 @@ static netdev_features_t mtk_features_ch
  }
  #endif
  
@@ -90,7 +89,7 @@ diff --git a/drivers/net/ethernet/mediatek/mtk_eth_soc.c b/drivers/net/ethernet/
  static const struct ethtool_ops mtk_ethtool_ops = {
  	.get_link_ksettings	= mtk_get_link_ksettings,
  	.set_link_ksettings	= mtk_set_link_ksettings,
-@@ -5469,6 +5515,8 @@
+@@ -5438,6 +5484,8 @@ static const struct ethtool_ops mtk_etht
  	.set_msglevel		= mtk_set_msglevel,
  	.nway_reset		= mtk_nway_reset,
  	.get_link		= ethtool_op_get_link,
