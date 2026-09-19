@@ -121,3 +121,39 @@ Run `35466581399` "Build Kernel" (on push of eb8f58aedf):
   raise `eth2` to `9004` manually (also `eth0` if lan5 is used).
 - The realloc worker is async (scheduled), so give it ~1 s before grepping
   dmesg, and expect the change to appear as a new timestamped line.
+
+---
+
+## 6. Serial console boot audit (`/data/tftp/console.log`)
+
+Source: minicom capture spanning many boots (40+ "Starting kernel" markers).
+This section audits the **r195-eb8f58aedf** boot (last region, kernel built
+`Sep 19 20:10:29`); historical occurrences are given to show pre-existence.
+
+### 6.1 Result: the rework boot is clean
+
+- Kernel boots and driver probes: `eth0/eth1/eth2: mediatek frame engine at
+  ... irq 104`; `br-lan` up at mtu 9000; UBI healthy (`good PEBs: 2032,
+  bad PEBs: 0`).
+- **No** oops/panic/RIP/segfault/hung-task/soft-lockup/RCU-stall/OOM, **no**
+  skb/mt8090 page_pool/DMA/PSE warnings.
+- The worker's three realloc events are visible on the serial console too:
+  boot grow `1536 -> 9216` (t=37.5s) and our live shrink `9216 -> 1536`
+  (t=571.8s) / grow `1536 -> 9216` (t=577.4s).
+- WLAN `mt7996e` firmware loads (WM/DSP/WA, build 2026-03-11); MxL86252
+  `switch ready after 2490ms, firmware 1.0.85`; AS21010 PHY fw 1.9.1.
+- **No `mtk_ppe`/WED errors anywhere in the whole log.**
+
+### 6.2 Noteworthy (all pre-existing, NOT caused by the rework)
+
+| # | Log line | Context / note |
+|---|---|---|
+| 1 | `mt7530-mmio ...: nonfatal error -34 setting MTU to 1500 on port 0` (and mxl862xx port 1), followed by `eth0/eth2: mtu greater than device maximum` + `mtk_soc_eth eth0: error -22 setting MTU to 1504 to include DSA overhead` | Present in **11+ boots** (back to pre-rework). DSA's early conduit-mtu provisioning is rejected; netifd later sets the real MTUs. This is why user-port 9000 never propagates to the conduit (stays 1504) and the manual `eth2 mtu 9004` was needed for CPU-bound jumbo (§4.2/§5). Harmless for the realloc path. |
+| 2 | `mtk-pcie-gen3 11xx0000.pcie: probe ... failed with error -110` | 96× across log; timeouts on non-WLAN PCIe controllers (mt7996e WLAN on the one that succeeds). Likely unpopulated slots. |
+| 3 | `xhci-mtk 11190000.usb: probe ... failed with error -110` | 47×; USB3 controller timeouts. |
+| 4 | `mtk-xsphy soc:xs-phy@11e10000: failed to get ref_clk(id-1)` | 49×; optional second ref clock. |
+| 5 | `Alternate GPT is invalid, using primary GPT` | 41×; benign block-device scan. |
+| 6 | `block: unable to load configuration (fstab: Entry not found)` | Expected: no `/etc/config/fstab` (dnsmasq/fstab disabled). |
+| 7 | `urandom-seed: Seed file not found (/etc/urandom.seed)` | First boot after sysupgrade (fresh seed). |
+| 8 | `rdinit=/init failed: -2, ignoring` | Normal UBI rootfs fallback. |
+| 9 | `mt7996e ... Firmware Version: ____000000` | Blank placeholder fields in fw banner — cosmetic, loads fine. |
