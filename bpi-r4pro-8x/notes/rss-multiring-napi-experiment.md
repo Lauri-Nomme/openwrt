@@ -1207,3 +1207,26 @@ full throughput.
 Recommendation: persist MTU 9000 on eth2/lan6/br-lan in uci as the production
 config for the 10G link (keep wan/eth1 at 1500 unless the upstream is 9K too).
 Elect to KEEP the 9K experiment.
+### RCA: banana<->precision 9K 100% loss FIXED - lan3 port MTU was 1500 (2026-09-19)
+
+Symptom: 8K (DF) ping banana<->precision (lan3, 1G) failed 100% both ways,
+while banana<->changwang (lan6, 10G) and peer<->peer worked.
+
+Evidence:
+- precision->banana 8K request ARRIVED at banana br-lan (8 echo pairs seen).
+- banana emitted 8K reply (br-lan) but it never entered eth2 (0x1f5c=8028 absent
+  from eth2 capture) and never reached precision.
+- No switch MIB counter moved (lan3 TxAcmDropped=0, MtuExceed=0; eth2 rx_fcs
+  static).
+
+Root cause: only lan6/eth2/br-lan had MTU 9000; lan1-lan5 (incl. precision's
+lan3) were still MTU 1500. The bridge forwarded the 8K reply into lan3's DSA
+port, whose egress MTU (1500) dropped the >1518 reply. Asymmetric: ingress to
+br-lan accepts (no per-port ingress MTU), egress via lan3 rejected.
+
+Fix: set lan1-lan5 MTU 9000 in uci (all DSA member ports must match the bridge
+MTU for jumbo) + network restart.
+
+Verified: full 6-direction 8K matrix all 0% loss (banana<->changwang, banana<->
+precision, changwang<->precision). Backup config v1-restore/network updated with
+lan1-5 mtu 9000.
