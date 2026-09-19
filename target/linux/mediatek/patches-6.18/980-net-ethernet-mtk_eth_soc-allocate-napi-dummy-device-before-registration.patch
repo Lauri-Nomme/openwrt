@@ -33,9 +33,9 @@ goto to err_deinit_ppe (err_unreg_netdev label is removed).
 
 --- a/drivers/net/ethernet/mediatek/mtk_eth_soc.c
 +++ b/drivers/net/ethernet/mediatek/mtk_eth_soc.c
-@@ -6181,28 +6181,18 @@
- 		}
- 	}
+@@ -6271,28 +6271,18 @@ static int mtk_probe(struct platform_dev
+ 
+ 	eth->rx_buf_len = MTK_MAX_RX_LENGTH;
  
 -	for (i = 0; i < MTK_MAX_DEVS; i++) {
 -		if (!eth->netdev[i])
@@ -68,7 +68,7 @@ goto to err_deinit_ppe (err_unreg_netdev label is removed).
  	}
  	eth->dummy_dev->threaded = 1;
  	strcpy(eth->dummy_dev->name, "mtk_eth");
-@@ -6215,15 +6205,29 @@
+@@ -6305,15 +6295,29 @@ static int mtk_probe(struct platform_dev
  				       mtk_napi_rx);
  	}
  
