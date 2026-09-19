@@ -1230,3 +1230,27 @@ MTU for jumbo) + network restart.
 Verified: full 6-direction 8K matrix all 0% loss (banana<->changwang, banana<->
 precision, changwang<->precision). Backup config v1-restore/network updated with
 lan1-5 mtu 9000.
+### DHCP conflict RCA: banana served DHCP, broke odroid PXE (2026-09-19, FIXED)
+
+odroid (00:1e:06:45:43:18, fixed .40, PXE bootfile odroid/syslinux.efi via
+10.222.1.1) couldn't TFTP/netboot. Server side was healthy (all odroid/*
+files + NFS /data/odroid + ISC dhcpd fine).
+
+Root cause: the BANANA ran dnsmasq with DHCP on br-lan (range 100-249, from the
+saved v1-restore/dhcp 'lan' section, dhcpv4/6 'server'). Its lease file showed
+00:1e:06:45:43:18 = 10.222.1.152 — dhcpd offered the odroid its fixed .40, but
+the odroid had bound the banana's .152 and kept requesting it -> dhcpd NAK
+"wrong network" -> PXE bootstrap died.
+
+Also fixed: /etc/config/dhcp had a malformed `nonwildcard '1'` line (bare value,
+no option keyword) causing `uci show dhcp` Parse error at line 16.
+
+Fix applied on banana:
+- dnsmasq: /etc/init.d/dnsmasq disable + stop; uci dhcp.dnsmasq.enable=0
+- odhcpd (DHCPv6/RA): /etc/init.d/odhcpd disable + stop
+- removed nonwildcard line
+- no :53/:67/:547 listeners remain; disabled at boot.
+- v1-restore/dhcp updated (enable=0, nonwildcard removed).
+- NOTE: restore.sh does NOT push /etc/config/odhcpd; odhcpd is disabled via its
+  init script already (persists). If a full reflash+restore ever brings DHCP
+  back, re-check odhcpd + dnsmasq enable.
