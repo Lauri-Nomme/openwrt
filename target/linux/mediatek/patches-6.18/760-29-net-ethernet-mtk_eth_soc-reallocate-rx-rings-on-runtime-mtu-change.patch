@@ -1,0 +1,68 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Lauri Nomme <lauri.nomme@gmail.com>
+Date: Sat, 19 Sep 2026 13:40:00 +0300
+Subject: [PATCH] net: ethernet: mtk_eth_soc: reallocate RX rings on runtime MTU change
+
+The RX ring buffers are sized from eth->rx_buf_len at DMA init (first
+ndo_open). Changing the MTU on a running interface updated rx_buf_len and
+the PDMA SDL register but left the already-allocated ring buffers at their
+old (smaller) size: a jumbo frame larger than the pre-existing buffer then
+overran in skb_put() (skb_over_panic, end:0xec0) inside mtk_poll_rx.
+
+On a runtime MTU change, if the selected rx_buf_len changed and at least
+one netdev is running, schedule the reset worker (mtk_pending_work) which
+stops all netdevs, re-inits the FE/DMA and reopens them - reallocating the
+ring buffers at the new size. Scheduling is skipped when a reset is already
+in flight (MTK_RESETTING) or the buffer size did not actually change.
+
+This makes 9K / MTU 2000 switching safe via `ip link set mtu` on a live
+interface, matching the boot-time behavior where MTU is configured before
+open.
+
+Signed-off-by: Lauri Nomme <lauri.nomme@gmail.com>
+---
+diff --git a/drivers/net/ethernet/mediatek/mtk_eth_soc.c b/drivers/net/ethernet/mediatek/mtk_eth_soc.c
+index 22d4199..1a337f7 100644
+--- a/drivers/net/ethernet/mediatek/mtk_eth_soc.c
++++ b/drivers/net/ethernet/mediatek/mtk_eth_soc.c
+@@ -4932,6 +4932,7 @@ static int mtk_change_mtu(struct net_device *dev, int new_mtu)
+ 	int length = new_mtu + MTK_RX_ETH_HLEN;
+ 	struct mtk_mac *mac = netdev_priv(dev);
+ 	struct mtk_eth *eth = mac->hw;
++	u32 old_buf_len;
+ 	int max_mtu, i;
+ 
+ 	if (rcu_access_pointer(eth->prog) &&
+@@ -4947,6 +4948,8 @@ static int mtk_change_mtu(struct net_device *dev, int new_mtu)
+ 	for (i = 0; i < ARRAY_SIZE(eth->ppe); i++)
+ 		mtk_ppe_update_mtu(eth->ppe[i], max_mtu);
+ 
++	old_buf_len = eth->rx_buf_len;
++
+ 	length = max_mtu + MTK_RX_ETH_HLEN;
+ 	if (length <= MTK_MAX_RX_LENGTH)
+ 		eth->rx_buf_len = MTK_MAX_RX_LENGTH;
+@@ -4968,6 +4971,23 @@ static int mtk_change_mtu(struct net_device *dev, int new_mtu)
+ 			eth->soc->reg_map->pdma.rx_cfg);
+ 	}
+ 
++	/* The RX ring buffers are sized from rx_buf_len at DMA init (first
++	 * open). A change to rx_buf_len does not resize already-allocated
++	 * rings: a jumbo frame larger than the pre-existing buffer would
++	 * overrun in skb_put() (skb_over_panic) on the running interface.
++	 * When the size actually changed and the device is up, bounce the
++	 * DMA via the reset worker so rings are reallocated at the new size.
++	 */
++	if (old_buf_len != eth->rx_buf_len &&
++	    !test_bit(MTK_RESETTING, &eth->state)) {
++		for (i = 0; i < MTK_MAX_DEVS; i++)
++			if (eth->netdev[i] && netif_running(eth->netdev[i]))
++				break;
++
++		if (i < MTK_MAX_DEVS)
++			schedule_work(&eth->pending_work);
++	}
++
+ 	return 0;
+ }
+ 
