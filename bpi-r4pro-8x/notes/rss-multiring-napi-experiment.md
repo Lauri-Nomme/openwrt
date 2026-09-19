@@ -1187,3 +1187,23 @@ Conclusive: mtk_eth_soc 9K fix (760-28) is CORRECT and crash-free (0 panics,
 uptime stable, 8K handled at CPU). Remaining 9K-to-1G limitation is a switch
 CPU-port egress hardware quirk for slow (1G) egress ports.
 MTUs restored to 1500. r182-042ac7380d running.
+### 9K MTU throughput gains (iperf, r182, 2026-09-19) — BIG win, keep 9000
+
+banana<->changwang 10G link, iperf3 -P4, t=5-8s:
+
+                    MTU 1500        MTU 9000        gain
+  TCP fwd (cw->ban)  4.43 Gb/s       9.89 Gb/s     +126%
+  TCP rev (ban->cw)  9.41 Gb/s       9.89 Gb/s     +5% (line rate anyway)
+  UDP fwd (cw->ban)  2.33 Gb/s (59%  9.63 Gb/s     +313%
+                     pkt loss)       (2.9% loss)
+  UDP rev (ban->cw)  2.87 Gb/s (0%   9.88 Gb/s     +244%
+                     loss)           (0.09% loss)
+
+At MTU 9000 both dirs reach ~9.9 Gb/s (10G line rate) for TCP and UDP with tiny
+loss. At 1500 the banana's RX is 4-stream/CPU-bound (4.4G TCP) and UDP RX is
+packet-rate-capped (~2.3-2.9G). The r182 760-28 fix makes 9K usable: no panics,
+full throughput.
+
+Recommendation: persist MTU 9000 on eth2/lan6/br-lan in uci as the production
+config for the 10G link (keep wan/eth1 at 1500 unless the upstream is 9K too).
+Elect to KEEP the 9K experiment.
