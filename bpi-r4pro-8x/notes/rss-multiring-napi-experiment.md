@@ -1400,3 +1400,31 @@ ACTION (decision pending, no build this pass): validate set_rxfh indir
 entries (< rss_num) + gate rxfh ops on MTK_RSS; on next 6.18 bump re-derive
 rx_buf_len math vs HLEN-26 and re-verify 979/flowtable; lab-check mixed-MTU
 routed traffic + TX csum (wteiken); watch #24784 WED + #24863 EEE.
+### Current-state re-test (r195, threaded NAPI, rc.local tuning) matrix (2026-09-20)
+
+Baseline for the pending threaded=0 A/B. Fabric: banana+changwang, 10G link;
+banana r195-eb8f58aedf, `eth->dummy_dev->threaded = 1` (NAPI on
+`napi/mtk_eth-*` kthreads), rc.local applied (IRQ 104→0-1, RSS 106-109→
+CPU0-3 effective; kthreads spread 0/0-1/0,2/0,3/0). iperf3 client changwang
+→ banana (banana is server; `-R` = banana TX). `-t 8`.
+
+| test | MTU 9000 | MTU 1500 |
+|---|---|---|
+| ingress (cw→ban) P1 | 9.74 G | 5.25 G |
+| ingress P4 | 9.88 G | **6.66 G** |
+| ingress P8 | 9.50 G | 6.33 G |
+| egress (ban→cw) P1 | 9.87 G | 9.37 G |
+| egress P4 | 9.91 G | 9.35 G |
+
+- At MTU 1500 egress stays ~9.4 (packet count is fine TX); ingress is
+  packet-rate bound (5.3-6.7) — the byte-rate is NOT the limit (9.7-9.9 at
+  9K). So "9K MTU" is the headline fix for the RX path.
+- The old "~4.5G ingress" figure predates full rc.local tuning; with
+  IRQ-effective + kthread spread, threaded=1 gives up to ~6.66G (P4) at 1500.
+- Still ~0.6-0.9G below frank's ~7.2-7.3 (softirq NAPI + irq-affinity claim) →
+  the pending `threaded = 0` A/B at MTU 1500 should quantify the kthread
+  overhead. (Upstream 6.18.52 mainline + frank-w fw73.c set no `threaded`.)
+- Live shrink `9216 -> 1536` (88257s) and grow `1536 -> 9216` (88315s) via
+  the 760-29 worker during the fabric MTU switch; links never dropped.
+- Fabric restored to 9000 (eth0/eth2 9004, br-lan 9000, changwang 9000);
+  8K DF ping OK.
