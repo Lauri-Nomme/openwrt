@@ -1428,3 +1428,31 @@ CPU0-3 effective; kthreads spread 0/0-1/0,2/0,3/0). iperf3 client changwang
   the 760-29 worker during the fabric MTU switch; links never dropped.
 - Fabric restored to 9000 (eth0/eth2 9004, br-lan 9000, changwang 9000);
   8K DF ping OK.
+### threaded=0 (softirq NAPI) A/B — REJECTED (2026-09-21)
+
+Built `threaded = 0` (patch 981, commit f383874d96), flashed r201-f383874d96
+preserving config. Verified: **no `napi/mtk_eth-*` kthreads** after boot
+(softirq NAPI active); rc.local IRQ affinity (106-109 → 1/2/4/8) intact;
+boot grow `1536 -> 9216`; 760-29 worker live shrink/grow clean.
+
+| test | threaded=1 (r195) | threaded=0 (r201) |
+|---|---|---|
+| MTU1500 ingress P1 | 5.25 G | 5.30 G |
+| MTU1500 ingress P4 | **6.66 G** | 5.27 G (2822 retr) |
+| MTU1500 ingress P8 | 6.33 G | 4.86 G (4098 retr) |
+| MTU1500 egress P1 | 9.37 G | 9.37 G |
+| MTU1500 egress P4 | 9.35 G | 9.40 G |
+| MTU9000 ingress P4 | 9.88 G | 9.16 G (350 retr) |
+| MTU9000 egress P4 | 9.91 G | 9.90 G |
+
+**Verdict: hypothesis rejected.** Softirq NAPI is not better anywhere; at
+multi-stream it is *worse* (higher retransmissions, `eth2 rx_dropped` climb,
+ingress P4 6.66→5.27, P8 6.33→4.86; at 9K 9.88→9.16). The MTU-1500 ingress
+wall is NOT threaded-NAPI kthread overhead; it sits in the PDMA/GDM packet-rate
+path (frank's ~7.2-7.3 @1500 is not reproducible against our ingress in either
+NAPI mode — his number likely reflects different measurement conditions:
+jumbo-agnostic frames, iperf2, or sender/hardware specifics; our egress is
+~9.4-9.9 regardless).
+
+**Decision: keep `threaded = 1`** (r195). Patch 981 documented-and-revert.
+Fabric restored to 9000; 8K DF ping 3/3.
