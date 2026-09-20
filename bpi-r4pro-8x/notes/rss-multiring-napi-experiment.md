@@ -1329,3 +1329,74 @@ Committed 3ae8cff43f (branch bpi-r4pro-8x-v2-multiring-napi).
 ACTION (pending decision, no build done this pass):
 - Upgrade 760-29 to frank's dedicated rx_buf_len_work design (faster, safer
   than full FE reset). All else is watch-list only.
+### Upstream / PR / forums sweep (2026-09-20) — after 760-29 rework flashed as r195
+
+**netdev / upstream kernel (mtk_eth_soc):**
+- "Add RSS and LRO support" series (Mason Chang; Frank Wunderlich) last seen
+  at **v8 (2026-05-09)**; not merged as of this sweep. Automated review
+  (2026-05-14) flagged points that map 1:1 to our port:
+  - `MTK_RX_DONE_INT(eth,0)` v3 = BIT(24) vs old BIT(14) (reviewer asked if
+    intentional). Our live MT7988 proves BIT(24+ring) works (all 4 rings fire).
+  - **Ungated ethtool rxfh ops + no indir[i] validation vs rss_num** — true of
+    our 760-24/25 too. Adopt gating/validation when the series lands.
+  - DIM split regs `0x6ab0/0x6ac0` + `val<<16` ring dup — exactly the code we
+    reverted (probe-hang red herring); reviewer also: "do rings 2/3 ever get
+    moderation updates?".
+  - Series sets MT7988 rx `dma_size` 2K→1K (we KEPT 2K deliberately) and bumps
+    `MTK_RX_ETH_HLEN` 18→26 globally (max_mtu -8 everywhere; reviewer objected).
+    If we adopt a landed series, re-derive our rx_buf_len math with +26.
+  - Series enables **MTK_HWLRO on MT7988** (with page_pool-policy ripple). We
+    deliberately skip HWLRO (ordering bug + terminating-only); if LRO part ever
+    lands upstream we'd argue RSS-without-LRO.
+- Merged upstream single-NAPI bugfix `e095f249e220` "pass eth to
+  mtk_handle_irq_rx in poll_controller" (Jul 2026) — our per-ring tree passes
+  `&rx_napi[0]`, unaffected.
+
+**OpenWrt (fork PRs):**
+- main kernel still **6.18.52** (`target/linux/generic/kernel-6.18`);
+  .44→.52 deltas unchanged from the earlier note (nvmem-layout-bus, flowtable
+  fixes, QDMA-TX, desc_shift, dma_size bumps, mac-addr inline, pcs rework,
+  caps slim). Re-validate 979/stable-MAC + flowtable on a bump.
+- #24569 BPI-R4 Pro [8x, 4e] base — still **OPEN** (Aug 9). PR now carries
+  phy/switch/pcs driver patches (as21xxx fw **1.9.2**, mxl862xx combo-port
+  mux, mt7530 gsw, pcs-mtk-usxgmii) + dts + uboot + mt76, but NOT our
+  mtk_eth_soc RSS/jumbo/rxrealloc work (stays downstream 760-series).
+- **#22612 upstream MxL862xx DSA driver — MERGED** (Mar 28) → adopt-when-rebasing.
+- **#24863 restore EEE on mt753x/mtk_eth_soc — MERGED** (Sep 20).
+- #24897 BPI-R4 pro 4e — OPEN (Sep 16). #24279 ramoops — OPEN (Sep 17; kernel
+  side accepted on v7.3-next/dts64, bpi-r4 scope). #24784 WED 2.0 WDMA TX hang
+  backport — OPEN (Sep 18). #24990 as21xxx hwmon — OPEN. #23499 persistent mac
+  via soc-uuid — OPEN (contrast with our nvmem 979). #17992 bigger RX rings
+  MT7622/7981 — OPEN (we already run 2K). #24892 mxl assisted learning +
+  #24900 as21xxx phy + #24973 fwnode PCS — all MERGED (we carry PCS locally).
+
+**BPI forum:**
+- #27340 flowtable corrupts large TCP (r4-pro-8x): confirmed fastpath truncates
+  large segments (hw AND sw offload); practical fix = drop `flow add @f` or keep
+  DSA conduits out of the flowtable devices. We ship **no** /etc/flowtable.conf
+  (absent on banana) but `flow_offloading=1` — keep the device list to real ports.
+- #17248 jumbo: **wteiken (Jun 2026)** heavy-use finding — with mixed MTU
+  (lan 9000 / wan 1500) ROUTED TCP corrupts 32-64B segments once ANY port is
+  >2022 (even inactive); only TX-csum-offload off fixes it; cap 7936 is safe;
+  frank's `MTK_RESV_BUF 0x40→0x80` (87ee0b7ff6, xDMA hang) helps. **We already
+  carry 0x80** (mtk_eth_soc.h). TODO: lab-check mixed-MTU routed traffic + csum.
+  MTK runtime-9K patch `3ca030585a` = ancestor of our rx-realloc rework; MTK
+  confirms internal-switch GMACCR MAX_RX_JUMBO encoder (`-34` nonfatal on
+  mt7530 ports seen by everyone, incl. our console audit).
+- #26071 LRO/RSS: still conclusive — HWLRO terminating-only, 2 (extendable 4)
+  IPs, "marketing gimmick" (matt1606); frank-w "RSS is crucial, LRO is not";
+  the 4.5→8.4 RSS-only report stands. Re-validates no-HWLRO.
+
+**frank-w:** 6.18-jumbo/7.3-jumbo carry the runtime ring-realloc
+(`f2d6ce7925`, now our 760-29 ancestor incl. cancel-before-free ordering).
+7.1-main QDMA-TX UAF fix (meehien) — not applicable to our 6.18.44 base.
+
+**Our fork:** `b277debe8` (cancel-before-free ordering fix) — CI **green**
+(Build Kernel, 44m53s). Branch net: 760-21..26 RSS/multiring, 760-27 9K,
+760-28 SDL+page_pool, 760-29 rx-buf-realloc worker (upstream design,
+quilt-canonical), 979 stable-MAC, 980 dummy-NAPI.
+
+ACTION (decision pending, no build this pass): validate set_rxfh indir
+entries (< rss_num) + gate rxfh ops on MTK_RSS; on next 6.18 bump re-derive
+rx_buf_len math vs HLEN-26 and re-verify 979/flowtable; lab-check mixed-MTU
+routed traffic + TX csum (wteiken); watch #24784 WED + #24863 EEE.
