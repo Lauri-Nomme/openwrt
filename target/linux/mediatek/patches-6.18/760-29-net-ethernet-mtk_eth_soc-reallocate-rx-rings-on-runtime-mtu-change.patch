@@ -30,6 +30,9 @@ runs under the MTK_RESETTING flag:
   and restarts them, ordering the MAC max-rx writes so that shrinking
   narrows the MACs first and growing widens them only once the rings fit
   the larger frames.
+- The worker reads the netdev MTUs (mtk_rx_buf_len() -> mtk_max_gmac_mtu())
+  before its refcount gate, so rx_buf_len_work is cancelled before the
+  netdevs are freed during teardown, not after.
 - The PDMA SDL (max RX frame) is programmed in mtk_dma_init() from the
   just-derived rx_buf_len on every ring allocation, covering the MT7988
   non-HWLRO path.
@@ -429,14 +432,14 @@ Signed-off-by: Lauri Nomme <lauri.nomme@gmail.com>
  
  	return 0;
  }
-@@ -5135,6 +5278,7 @@ static int mtk_cleanup(struct mtk_eth *e
+@@ -5133,6 +5276,7 @@ static int mtk_cleanup(struct mtk_eth *e
+ {
+ 	mtk_sgmii_destroy(eth);
  	mtk_unreg_dev(eth);
++	cancel_work_sync(&eth->rx_buf_len_work);
  	mtk_free_dev(eth);
  	cancel_work_sync(&eth->pending_work);
-+	cancel_work_sync(&eth->rx_buf_len_work);
  	cancel_delayed_work_sync(&eth->reset.monitor_work);
- 
- 	return 0;
 @@ -6124,6 +6268,7 @@ static int mtk_probe(struct platform_dev
  
  	eth->msg_enable = netif_msg_init(mtk_msg_level, MTK_DEFAULT_MSG_ENABLE);
