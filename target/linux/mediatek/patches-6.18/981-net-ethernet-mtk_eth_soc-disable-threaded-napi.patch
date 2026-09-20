@@ -1,0 +1,24 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Lauri Nomme <lauri.nomme@gmail.com>
+Date: Sat, 20 Sep 2026 18:00:00 +0300
+Subject: [PATCH] net: ethernet: mtk_eth_soc: run RX NAPI in softirq context (A/B)
+
+The shared tx/rx NAPI set rides on the dummy netdevice with threaded = 1,
+so RX is serviced by napi/mtk_eth-* kthreads (per-packet wake/schedule
+overhead on this path). Upstream mainline and frank-w run NAPI in softirq
+context. This A/B test flips threaded = 0 to quantify the kthread overhead
+on the MT7988 ingress path at MTU 1500; revert once measured.
+
+Signed-off-by: Lauri Nomme <lauri.nomme@gmail.com>
+---
+--- a/drivers/net/ethernet/mediatek/mtk_eth_soc.c
++++ b/drivers/net/ethernet/mediatek/mtk_eth_soc.c
+@@ -6409,7 +6409,7 @@ static int mtk_probe(struct platform_dev
+ 		dev_err(eth->dev, "failed to allocated dummy device\n");
+ 		goto err_deinit_ppe;
+ 	}
+-	eth->dummy_dev->threaded = 1;
++	eth->dummy_dev->threaded = 0;
+ 	strcpy(eth->dummy_dev->name, "mtk_eth");
+ 	netif_napi_add(eth->dummy_dev, &eth->tx_napi, mtk_napi_tx);
+ 	netif_napi_add(eth->dummy_dev, &eth->rx_napi[0].napi, mtk_napi_rx);
