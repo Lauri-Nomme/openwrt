@@ -1456,3 +1456,39 @@ jumbo-agnostic frames, iperf2, or sender/hardware specifics; our egress is
 
 **Decision: keep `threaded = 1`** (r195). Patch 981 documented-and-revert.
 Fabric restored to 9000; 8K DF ping 3/3.
+
+### iperf2 3-node matrix, MTU 1500 vs 9000 (2026-09-23, r203 threaded)
+
+Installed iperf2 (2.2.1) on all three nodes: changwang (apt `iperf`), odroid
+(Debian forky, apt), banana (built `iperf-2.2.1-r1.apk` from the fork's
+`feeds/packages/net/iperf`, `apk add --allow-untrusted`).
+
+Topology: changwang on banana **lan6** (10G, MxL port13/usxgmii), odroid on
+**lan2** (MxL integrated, **2.5G**); both ride the MxL switch, so
+cw<->odroid is switch-only and the banana pairs go through the CPU (eth2).
+Default route of odroid is via banana (10.222.1.2).
+
+iperf2 TCP, `-t 10`, both `-P4` and `-P1`, both directions:
+
+| direction | MTU9000 P4 | MTU9000 P1 | MTU1500 P4 | MTU1500 P1 |
+|---|---|---|---|---|
+| cw -> banana   | 9.81 | 9.69 | 6.24 | 4.75 |
+| banana -> cw   | 8.98 | 9.83 | 8.50 | 9.38 |
+| cw -> odroid   | 2.47 | 2.46 | 2.35 | 2.35 |
+| odroid -> cw   | 2.47 | 2.47 | 2.35 | 2.35 |
+| banana -> odroid | 2.47 | 2.47 | 2.35 | 2.35 |
+| odroid -> banana | 2.47 | 2.47 | 2.35 | 2.35 |
+
+Notes:
+- **odroid pairs are capped ~2.35-2.47 G** by odroid's 2.5G NIC / lan2 link;
+  MTU 1500 vs 9000 changes them by only ~5% (2.47 -> 2.35). No CPU/RSS effect
+  at 2.5G.
+- **banana<->changwang 10G**: at MTU 9000 both directions ~9.7-9.8 (P1
+  banana->cw 9.83). At MTU 1500 the **ingress** direction drops (cw->banana
+  P4 6.24 / P1 4.75) while **egress** stays high (8.5-9.4). Same shape as iperf3.
+- iperf2 vs iperf3 numbers agree closely (cw->banana @9000 P4: 9.81 vs 9.88;
+  @1500 P4: 6.24 vs 6.66), so the earlier "4.5-6.7 @1500" wall is not an
+  iperf3 artifact and frank's ~7.2 is not an iperf2-vs-3 artifact.
+- MTUs restored after test: banana/changwang 9000 (conduits 9004), odroid back
+  to 1500. `rx buffer length 9216 <-> 1536` shrink/grow via 760-29 worker
+  observed both ways; 8K DF ping OK.
