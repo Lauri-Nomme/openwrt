@@ -1492,3 +1492,47 @@ Notes:
 - MTUs restored after test: banana/changwang 9000 (conduits 9004), odroid back
   to 1500. `rx buffer length 9216 <-> 1536` shrink/grow via 760-29 worker
   observed both ways; 8K DF ping OK.
+
+### Upstream / PR / forum sweep (2026-09-23)
+
+**forums:**
+- #17248 jumbo: new posts #84-#89. rbtree posted the threaded=1 vs =0 A/B (#84)
+  and the iperf2 3-node matrix (#88). frank #85 asked to also try **iperf2**
+  (done, #88); frank **#89** says move the RSS/LRO part out of the jumbo thread
+  -> to #26071 or a new "non-upstream OpenWrt" thread.
+- #26071 (LRO/RSS): 18 posts, last activity **2026-09-04** (no new). That is
+  frank's suggested venue; a reply/continuation there is outstanding.
+- #27340 flowtable-large-TCP: unchanged; fix stands (keep conduits out of
+  flowtable devices).
+
+**netdev / upstream:**
+- RSS/LRO series still at **v8 (May)** + auto-review; no v9. frank (#83): MTK is
+  reworking RSS/LRO due to mescheen's LRO report; mescheen patches live only in
+  frank's kernel branches. We stay RSS-only / no HWLRO.
+- New mtk_eth_soc patch: `[PATCH net v3 2/2] populate lpi_interfaces to fix EEE
+  support` (2026-08-27) — EEE-related, matches OpenWrt #24863.
+
+**OpenWrt:**
+- **#25331 `kernel: bump 6.18 to 6.18.53`** (OPEN, 2026-09-23) — main moving
+  .52 -> .53. Re-check nvmem(979)/flowtable on any bump.
+- #23123 `kernel: fix DSA flowtable roaming` (OPEN) — relevant to flow offload.
+- #24887 RTL826x PHY hardening (OPEN); #24038 nft_flow_offload bridge offload
+  (OPEN); #24784 WED 2.0 WDMA TX hang backport (OPEN).
+- downstream mtk TX series in stintel staging (`795-04..09`): per-SoC QDMA TX
+  queue count/register paging, per-conduit DSA user-port queue map,
+  mxl862xx_8021q queue_mapping, PPE offload to MxL — overlaps our DSA TX queue
+  map work; watch.
+
+**frank-w:**
+- `openwrt@R4Pro_RSS` unchanged since 2026-09-20 (`1c4bf57a2`); still one commit
+  behind our **cancel-before-free order fix** (b277debe84) — his 760-29 cancels
+  `rx_buf_len_work` after `mtk_free_dev`.
+- kernel `7.3-jumbo`/`7.2-jumbo` unchanged (2026-09-06/07); `6.19-jumbo`,
+  `7.0-jumbo` exist.
+
+**our fork CI:** last green kernel runs = `b277debe8` (ordering fix) and
+`f383874d9` (softirq A/B). The **revert commit `35ab3976b` shows a red run**,
+but it is an **empty-targets artifact**: "Set targets" produced `[]` (deleting a
+patch file is not classified as an affected kernel) -> no build jobs -> workflow
+marked failure. No patch/build failure; the revert restores exactly the state of
+the green `b277debe8`. Notes-only pushes show the same pattern.
