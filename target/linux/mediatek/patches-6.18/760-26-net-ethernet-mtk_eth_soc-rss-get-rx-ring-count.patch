@@ -17,7 +17,7 @@ Signed-off-by: Lauri Nomme <lauri.nomme@gmail.com>
 
 --- a/drivers/net/ethernet/mediatek/mtk_eth_soc.c
 +++ b/drivers/net/ethernet/mediatek/mtk_eth_soc.c
-@@ -5219,6 +5219,19 @@ static void mtk_get_ethtool_stats(struct
+@@ -5241,6 +5241,19 @@ static void mtk_get_ethtool_stats(struct
  	} while (u64_stats_fetch_retry(&hwstats->syncp, start));
  }
  
@@ -37,7 +37,7 @@ Signed-off-by: Lauri Nomme <lauri.nomme@gmail.com>
  static int mtk_get_rxnfc(struct net_device *dev, struct ethtool_rxnfc *cmd,
  			 u32 *rule_locs)
  {
-@@ -5480,6 +5493,7 @@ static const struct ethtool_ops mtk_etht
+@@ -5502,6 +5515,7 @@ static const struct ethtool_ops mtk_etht
  	.get_link		= ethtool_op_get_link,
  	.get_channels		= mtk_get_channels,
  	.set_channels		= mtk_set_channels,

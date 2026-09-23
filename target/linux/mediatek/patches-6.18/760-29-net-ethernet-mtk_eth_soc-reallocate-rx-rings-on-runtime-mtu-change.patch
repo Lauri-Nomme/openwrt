@@ -53,7 +53,7 @@ Signed-off-by: Lauri Nomme <lauri.nomme@gmail.com>
  static void mtk_mac_config(struct phylink_config *config, unsigned int mode,
  			   const struct phylink_link_state *state)
  {
-@@ -3614,6 +3617,12 @@ static int mtk_dma_init(struct mtk_eth *
+@@ -3636,6 +3639,12 @@ static int mtk_dma_init(struct mtk_eth *
  	if (mtk_dma_busy_wait(eth))
  		return -EBUSY;
  
@@ -66,7 +66,7 @@ Signed-off-by: Lauri Nomme <lauri.nomme@gmail.com>
  	if (MTK_HAS_CAPS(eth->soc->caps, MTK_QDMA)) {
  		/* QDMA needs scratch memory for internal reordering of the
  		 * descriptors
-@@ -3668,6 +3677,20 @@ static int mtk_dma_init(struct mtk_eth *
+@@ -3690,6 +3699,20 @@ static int mtk_dma_init(struct mtk_eth *
  		mtk_w32(eth, 0x0, eth->soc->reg_map->qdma.hred);
  	}
  
@@ -87,7 +87,7 @@ Signed-off-by: Lauri Nomme <lauri.nomme@gmail.com>
  	return 0;
  }
  
-@@ -4048,14 +4071,81 @@ static int mtk_max_gmac_mtu(struct mtk_e
+@@ -4070,14 +4093,81 @@ static int mtk_max_gmac_mtu(struct mtk_e
  	return max_mtu;
  }
  
@@ -173,7 +173,7 @@ Signed-off-by: Lauri Nomme <lauri.nomme@gmail.com>
  
  	err = phylink_of_phy_connect(mac->phylink, mac->of_node, 0);
  	if (err) {
-@@ -4066,56 +4156,12 @@ static int mtk_open(struct net_device *d
+@@ -4088,56 +4178,12 @@ static int mtk_open(struct net_device *d
  
  	/* we run 2 netdevs on the same dma ring so we only bring it up once */
  	if (!refcount_read(&eth->dma_refcnt)) {
@@ -231,7 +231,7 @@ Signed-off-by: Lauri Nomme <lauri.nomme@gmail.com>
  		refcount_set(&eth->dma_refcnt, 1);
  	} else {
  		refcount_inc(&eth->dma_refcnt);
-@@ -4186,22 +4232,13 @@ static void mtk_stop_dma(struct mtk_eth
+@@ -4208,22 +4254,13 @@ static void mtk_stop_dma(struct mtk_eth
  	}
  }
  
@@ -258,7 +258,7 @@ Signed-off-by: Lauri Nomme <lauri.nomme@gmail.com>
  	for (i = 0; i < MTK_MAX_DEVS; i++)
  		mtk_gdm_config(eth, i, MTK_GDMA_DROP_ALL);
  
-@@ -4228,6 +4265,24 @@ static int mtk_stop(struct net_device *d
+@@ -4250,6 +4287,24 @@ static int mtk_stop(struct net_device *d
  
  	for (i = 0; i < ARRAY_SIZE(eth->ppe); i++)
  		mtk_ppe_stop(eth->ppe[i]);
@@ -283,7 +283,7 @@ Signed-off-by: Lauri Nomme <lauri.nomme@gmail.com>
  
  	return 0;
  }
-@@ -4927,6 +4982,102 @@ static void mtk_uninit(struct net_device
+@@ -4949,6 +5004,102 @@ static void mtk_uninit(struct net_device
  	mtk_rx_irq_disable(eth, ~0);
  }
  
@@ -386,7 +386,7 @@ Signed-off-by: Lauri Nomme <lauri.nomme@gmail.com>
  static int mtk_change_mtu(struct net_device *dev, int new_mtu)
  {
  	int length = new_mtu + MTK_RX_ETH_HLEN;
-@@ -4940,33 +5091,25 @@ static int mtk_change_mtu(struct net_dev
+@@ -4962,33 +5113,25 @@ static int mtk_change_mtu(struct net_dev
  		return -EINVAL;
  	}
  
@@ -432,7 +432,7 @@ Signed-off-by: Lauri Nomme <lauri.nomme@gmail.com>
  
  	return 0;
  }
-@@ -5133,6 +5276,7 @@ static int mtk_cleanup(struct mtk_eth *e
+@@ -5155,6 +5298,7 @@ static int mtk_cleanup(struct mtk_eth *e
  {
  	mtk_sgmii_destroy(eth);
  	mtk_unreg_dev(eth);
@@ -440,7 +440,7 @@ Signed-off-by: Lauri Nomme <lauri.nomme@gmail.com>
  	mtk_free_dev(eth);
  	cancel_work_sync(&eth->pending_work);
  	cancel_delayed_work_sync(&eth->reset.monitor_work);
-@@ -6124,6 +6268,7 @@ static int mtk_probe(struct platform_dev
+@@ -6161,6 +6305,7 @@ static int mtk_probe(struct platform_dev
  
  	eth->msg_enable = netif_msg_init(mtk_msg_level, MTK_DEFAULT_MSG_ENABLE);
  	INIT_WORK(&eth->pending_work, mtk_pending_work);
@@ -450,7 +450,7 @@ Signed-off-by: Lauri Nomme <lauri.nomme@gmail.com>
  	if (err)
 --- a/drivers/net/ethernet/mediatek/mtk_eth_soc.h
 +++ b/drivers/net/ethernet/mediatek/mtk_eth_soc.h
-@@ -1451,6 +1451,7 @@ struct mtk_soc_data {
+@@ -1453,6 +1453,7 @@ struct mtk_soc_data {
   * @clks:		clock array for all clocks required
   * @mii_bus:		If there is a bus we need to create an instance for it
   * @pending_work:	The workqueue used to reset the dma ring
@@ -458,7 +458,7 @@ Signed-off-by: Lauri Nomme <lauri.nomme@gmail.com>
   * @state:		Initialization and runtime state of the device
   * @soc:		Holding specific data among various SoCs
   */
-@@ -1492,6 +1493,7 @@ struct mtk_eth {
+@@ -1494,6 +1495,7 @@ struct mtk_eth {
  	struct mii_bus			*mii_bus;
  	unsigned int			mdc_divider;
  	struct work_struct		pending_work;

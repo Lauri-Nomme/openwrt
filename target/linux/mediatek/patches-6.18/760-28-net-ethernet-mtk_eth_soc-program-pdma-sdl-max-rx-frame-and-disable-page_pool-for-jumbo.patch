@@ -23,7 +23,7 @@ Signed-off-by: Lauri Nomme <lauri.nomme@gmail.com>
 ---
 --- a/drivers/net/ethernet/mediatek/mtk_eth_soc.c
 +++ b/drivers/net/ethernet/mediatek/mtk_eth_soc.c
-@@ -2109,6 +2109,19 @@ static void mtk_update_rx_cpu_idx(struct
+@@ -2131,6 +2131,19 @@ static void mtk_update_rx_cpu_idx(struct
  
  static bool mtk_page_pool_enabled(struct mtk_eth *eth)
  {
@@ -43,7 +43,7 @@ Signed-off-by: Lauri Nomme <lauri.nomme@gmail.com>
  	return mtk_is_netsys_v2_or_greater(eth);
  }
  
-@@ -3240,6 +3253,17 @@ static int mtk_hwlro_rx_init(struct mtk_
+@@ -3262,6 +3275,17 @@ static int mtk_hwlro_rx_init(struct mtk_
  	mtk_w32(eth, (MTK_HW_LRO_TIMER_UNIT << 16) | MTK_HW_LRO_REFRESH_TIME,
  		MTK_PDMA_LRO_ALT_REFRESH_TIMER);
  
@@ -61,7 +61,7 @@ Signed-off-by: Lauri Nomme <lauri.nomme@gmail.com>
  	/* set HW LRO mode & the max aggregation count for rx packets */
  	lro_ctrl_dw3 |= MTK_ADMA_MODE | (MTK_HW_LRO_MAX_AGG_CNT & 0xff);
  
-@@ -4933,6 +4957,17 @@ static int mtk_change_mtu(struct net_dev
+@@ -4955,6 +4979,17 @@ static int mtk_change_mtu(struct net_dev
  	else
  		return -EINVAL;
  
