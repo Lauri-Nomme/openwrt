@@ -11,17 +11,20 @@
 #
 # Detection: an initramfs boot has root on tmpfs, while a flashed boot
 # mounts squashfs/ubifs for /rom and /overlay.
+#
+# NOTE: do NOT gate on the DSA user ports (`/sys/class/net/lan3`) existing.
+# uci-defaults run from /etc/init.d/boot (S10boot) long before the MxL/mt7530
+# DSA switches probe and create lan1..lan6 (observed: init - 12.4s,
+# lan3 netdev - 38.4s). The config is plain UCI and does not need the netdev;
+# netifd picks it up when the ports appear. An existence guard here makes the
+# script silently no-op.
 
-[ -e /etc/board.d/00_network ] && exit 0
 . /lib/functions/system.sh
 
 [ "$(board_name)" = "bananapi,bpi-r4-pro-8x" ] || exit 0
 
 # bail out if NOT initramfs (already running from flash)
 mount | grep -qE " on / type tmpfs" || exit 0
-
-# Verify the expected fallback port exists before reconfiguring
-[ -e /sys/class/net/lan3 ] || exit 0
 
 # Remove the default wan (10G combo) configs, set WAN on the lan3 2.5G
 # port, pin the LAN bridge to 10.222.1.2 and rebuild its port list.
@@ -39,7 +42,7 @@ uci -q batch <<-EOF
 	commit network
 EOF
 
-# make sure lan3 is in the LAN bridge's exclusion set
+# keep lan3 out of the LAN bridge (it is WAN in this boot mode)
 uci set network.@device[0].ports='lan1 lan2 lan4 lan5'
 uci commit network
 
