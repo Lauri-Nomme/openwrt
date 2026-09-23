@@ -18,7 +18,7 @@ Signed-off-by: Lauri Nomme <lauri.nomme@gmail.com>
 ---
 --- a/drivers/net/ethernet/mediatek/mtk_eth_soc.c
 +++ b/drivers/net/ethernet/mediatek/mtk_eth_soc.c
-@@ -5242,6 +5242,24 @@ static int mtk_get_rxnfc(struct net_devi
+@@ -5264,6 +5264,24 @@ static int mtk_get_rxnfc(struct net_devi
  			ret = 0;
  		}
  		break;
@@ -43,7 +43,7 @@ Signed-off-by: Lauri Nomme <lauri.nomme@gmail.com>
  	case ETHTOOL_GRXCLSRLCNT:
  		if (dev->hw_features & NETIF_F_LRO) {
  			struct mtk_mac *mac = netdev_priv(dev);
-@@ -5331,8 +5349,7 @@ static int mtk_get_rxfh(struct net_devic
+@@ -5353,8 +5371,7 @@ static int mtk_get_rxfh(struct net_devic
  	struct mtk_rss_params *rss_params = &eth->rss_params;
  	int i;
  
@@ -53,7 +53,7 @@ Signed-off-by: Lauri Nomme <lauri.nomme@gmail.com>
  
  	if (rxfh->key) {
  		memcpy(rxfh->key, rss_params->hash_key,
-@@ -5430,6 +5447,35 @@ static netdev_features_t mtk_features_ch
+@@ -5452,6 +5469,35 @@ static netdev_features_t mtk_features_ch
  }
  #endif
  
@@ -89,7 +89,7 @@ Signed-off-by: Lauri Nomme <lauri.nomme@gmail.com>
  static const struct ethtool_ops mtk_ethtool_ops = {
  	.get_link_ksettings	= mtk_get_link_ksettings,
  	.set_link_ksettings	= mtk_set_link_ksettings,
-@@ -5438,6 +5484,8 @@ static const struct ethtool_ops mtk_etht
+@@ -5460,6 +5506,8 @@ static const struct ethtool_ops mtk_etht
  	.set_msglevel		= mtk_set_msglevel,
  	.nway_reset		= mtk_nway_reset,
  	.get_link		= ethtool_op_get_link,

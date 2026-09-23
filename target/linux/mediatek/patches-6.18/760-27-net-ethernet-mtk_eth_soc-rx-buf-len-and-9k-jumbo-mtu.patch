@@ -47,7 +47,7 @@ Signed-off-by: Lauri Nomme <lauri.nomme@gmail.com>
  	MTK_SHARED_INT_BIT,
  	MTK_PDMA_INT_BIT,
  	MTK_TRGMII_MT7621_CLK_BIT,
-@@ -1136,6 +1140,7 @@ enum mkt_eth_capabilities {
+@@ -1137,6 +1141,7 @@ enum mkt_eth_capabilities {
  #define MTK_SHARED_SGMII	BIT_ULL(MTK_SHARED_SGMII_BIT)
  #define MTK_HWLRO		BIT_ULL(MTK_HWLRO_BIT)
  #define MTK_RSS			BIT_ULL(MTK_RSS_BIT)
@@ -55,7 +55,7 @@ Signed-off-by: Lauri Nomme <lauri.nomme@gmail.com>
  #define MTK_SHARED_INT		BIT_ULL(MTK_SHARED_INT_BIT)
  #define MTK_PDMA_INT		BIT_ULL(MTK_PDMA_INT_BIT)
  #define MTK_TRGMII_MT7621_CLK	BIT_ULL(MTK_TRGMII_MT7621_CLK_BIT)
-@@ -1268,7 +1273,7 @@ enum mkt_eth_capabilities {
+@@ -1270,7 +1275,7 @@ enum mkt_eth_capabilities {
  		      MTK_MUX_GMAC123_TO_GEPHY_SGMII | \
  		      MTK_MUX_GMAC123_TO_USXGMII | MTK_MUX_GMAC2_TO_2P5GPHY | \
  		      MTK_QDMA | MTK_RSTCTRL_PPE1 | MTK_RSTCTRL_PPE2 | MTK_SRAM | \
@@ -64,7 +64,7 @@ Signed-off-by: Lauri Nomme <lauri.nomme@gmail.com>
  
  struct mtk_tx_dma_desc_info {
  	dma_addr_t	addr;
-@@ -1478,6 +1483,7 @@ struct mtk_eth {
+@@ -1480,6 +1485,7 @@ struct mtk_eth {
  	struct napi_struct		tx_napi;
  	struct mtk_napi			rx_napi[MTK_RX_NAPI_NUM];
  	struct mtk_rss_params		rss_params;
@@ -83,7 +83,7 @@ Signed-off-by: Lauri Nomme <lauri.nomme@gmail.com>
  static void mtk_mac_config(struct phylink_config *config, unsigned int mode,
  			   const struct phylink_link_state *state)
  {
-@@ -744,6 +746,7 @@ static void mtk_mac_config(struct phylin
+@@ -742,6 +744,7 @@ static void mtk_mac_config(struct phylin
  	}
  
  	mac->interface = state->interface;
@@ -91,7 +91,7 @@ Signed-off-by: Lauri Nomme <lauri.nomme@gmail.com>
  
  	return;
  
-@@ -1318,22 +1321,22 @@ static void mtk_get_stats64(struct net_d
+@@ -1340,22 +1343,22 @@ static void mtk_get_stats64(struct net_d
  	storage->tx_dropped = dev->stats.tx_dropped;
  }
  
@@ -120,7 +120,7 @@ Signed-off-by: Lauri Nomme <lauri.nomme@gmail.com>
  
  	return buf_size;
  }
-@@ -1357,9 +1360,8 @@ static bool mtk_rx_get_desc(struct mtk_e
+@@ -1379,9 +1382,8 @@ static bool mtk_rx_get_desc(struct mtk_e
  	return true;
  }
  
@@ -131,7 +131,7 @@ Signed-off-by: Lauri Nomme <lauri.nomme@gmail.com>
  	unsigned long data;
  
  	data = __get_free_pages(gfp_mask | __GFP_COMP | __GFP_NOWARN,
-@@ -2528,7 +2530,7 @@ static int mtk_poll_rx(struct napi_struc
+@@ -2550,7 +2552,7 @@ static int mtk_poll_rx(struct napi_struc
  			if (ring->frag_size <= PAGE_SIZE)
  				new_data = napi_alloc_frag(ring->frag_size);
  			else
@@ -140,7 +140,7 @@ Signed-off-by: Lauri Nomme <lauri.nomme@gmail.com>
  
  			if (unlikely(!new_data)) {
  				netdev->stats.rx_dropped++;
-@@ -3041,8 +3043,8 @@ static int mtk_rx_alloc(struct mtk_eth *
+@@ -3063,8 +3065,8 @@ static int mtk_rx_alloc(struct mtk_eth *
  		rx_dma_size = soc->rx.dma_size;
  	}
  
@@ -151,7 +151,7 @@ Signed-off-by: Lauri Nomme <lauri.nomme@gmail.com>
  	ring->data = kcalloc(rx_dma_size, sizeof(*ring->data),
  			     GFP_KERNEL);
  	if (!ring->data)
-@@ -3081,7 +3083,7 @@ static int mtk_rx_alloc(struct mtk_eth *
+@@ -3103,7 +3105,7 @@ static int mtk_rx_alloc(struct mtk_eth *
  			if (ring->frag_size <= PAGE_SIZE)
  				data = netdev_alloc_frag(ring->frag_size);
  			else
@@ -160,7 +160,7 @@ Signed-off-by: Lauri Nomme <lauri.nomme@gmail.com>
  
  			if (!data)
  				return -ENOMEM;
-@@ -4098,6 +4100,12 @@ static int mtk_open(struct net_device *d
+@@ -4120,6 +4122,12 @@ static int mtk_open(struct net_device *d
  	phylink_start(mac->phylink);
  	netif_tx_start_all_queues(dev);
  
@@ -173,7 +173,7 @@ Signed-off-by: Lauri Nomme <lauri.nomme@gmail.com>
  	if (mtk_is_netsys_v2_or_greater(eth))
  		return 0;
  
-@@ -4376,20 +4384,32 @@ static void mtk_set_mcr_max_rx(struct mt
+@@ -4398,20 +4406,32 @@ static void mtk_set_mcr_max_rx(struct mt
  	if (MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7628))
  		return;
  
@@ -218,7 +218,7 @@ Signed-off-by: Lauri Nomme <lauri.nomme@gmail.com>
  }
  
  static void mtk_hw_dump_reg(struct mtk_eth *eth, char *name, u32 offset, u32 range)
-@@ -4903,6 +4923,16 @@ static int mtk_change_mtu(struct net_dev
+@@ -4925,6 +4945,16 @@ static int mtk_change_mtu(struct net_dev
  	for (i = 0; i < ARRAY_SIZE(eth->ppe); i++)
  		mtk_ppe_update_mtu(eth->ppe[i], max_mtu);
  
@@ -235,7 +235,7 @@ Signed-off-by: Lauri Nomme <lauri.nomme@gmail.com>
  	return 0;
  }
  
-@@ -5776,11 +5806,6 @@ no_pcs:
+@@ -5813,11 +5843,6 @@ no_pcs:
  
  	mac->phylink = phylink;
  
@@ -247,7 +247,7 @@ Signed-off-by: Lauri Nomme <lauri.nomme@gmail.com>
  	if (MTK_HAS_CAPS(eth->soc->caps, MTK_QDMA)) {
  		mac->device_notifier.notifier_call = mtk_device_event;
  		register_netdevice_notifier(&mac->device_notifier);
-@@ -6189,6 +6214,8 @@ static int mtk_probe(struct platform_dev
+@@ -6226,6 +6251,8 @@ static int mtk_probe(struct platform_dev
  		}
  	}
  
