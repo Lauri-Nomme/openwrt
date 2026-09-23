@@ -1,10 +1,12 @@
 #!/bin/sh
-# Apply TFTP/initramfs-only network overrides for the BPI-R4 Pro 8X.
+# Apply TFTP/initramfs-only overrides for the BPI-R4 Pro 8X.
 #
 # WAN on this board is the 10G combo port `eth1` (gmac1 / usxgmii, as21xxx
 # PHY). That is true in every boot mode, including recovery/TFTP, so the
 # override below only pins WAN explicitly to eth1 and sets the LAN address;
-# it must never move WAN to a switch port.
+# it must never move WAN to a switch port. The hostname is set to a distinct
+# value so a recovery/TFTP session is obvious at a glance (shell prompt,
+# DHCP leases, logs) and cannot be mistaken for the flashed production boot.
 #
 # This fires ONLY for an initramfs boot (TFTP/recovery). A flashed
 # NAND/eMMC boot keeps the stock default config untouched.
@@ -26,7 +28,8 @@
 mount | grep -qE " on / type tmpfs" || exit 0
 
 # WAN is eth1 in all boot modes; make it explicit rather than relying on
-# whatever the recovery image default happens to be, and pin the LAN addr.
+# whatever the recovery image default happens to be, pin the LAN address,
+# and give the recovery boot a clearly distinct hostname.
 uci -q batch <<-EOF
 	set network.wan=interface
 	set network.wan.device='eth1'
@@ -36,7 +39,9 @@ uci -q batch <<-EOF
 	set network.wan6.proto='dhcpv6'
 	set network.lan.ipaddr='10.222.1.2'
 	set network.lan.netmask='255.255.255.0'
+	set system.@system[-1].hostname='recovery'
 	commit network
+	commit system
 EOF
 
 exit 0
