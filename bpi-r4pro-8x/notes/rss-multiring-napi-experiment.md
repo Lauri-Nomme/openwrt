@@ -1536,3 +1536,89 @@ but it is an **empty-targets artifact**: "Set targets" produced `[]` (deleting a
 patch file is not classified as an affected kernel) -> no build jobs -> workflow
 marked failure. No patch/build failure; the revert restores exactly the state of
 the green `b277debe8`. Notes-only pushes show the same pattern.
+
+### Upstream / PR / forum sweep (2026-09-26)
+
+**our fork:**
+- `bpi-r4pro-8x-multiring-6.18.53` CI: green through `1f96c1c5a`
+  (recovery-hostname commit); head `928fe81b0c` is notes-only.
+- Parent `bpi-r4pro-8x-v2-multiring-napi` unchanged.
+
+**openwrt/openwrt (our areas):**
+- **#25331 `kernel: bump 6.18 to 6.18.53 and .54`** (EPinci, updated 09-26) — now
+  bumps TWO sublevels; base we rebased onto was the `.53` head. Notable for us:
+  `.53` **removed** `946-v7.3-net-dsa-mt7530-populate-lpi_interfaces-to-fix-EEE`
+  and `947-v7.3-net-ethernet-mtk_eth_soc-populate-lpi_interfaces-to-fix-EEE` as
+  upstreamed — i.e. the EEE/`lpi_interfaces` work that forced our `760-22/23`
+  CAPS hunk fix is now in the kernel proper. `.54` removes the ksmbd revert +
+  brcmfmac PMKID patches and rebases the nft_flow_offload netdevice-events
+  patch (`700-`). Build+run tested on mediatek/filogic per the PR.
+- **#25383 `generic: backport mt7530 driver unbind and stats64 fixes`** (OPEN,
+  09-25, +318/-4): three mt7530 fixes not in 6.18.y —
+  `get_stats64` sleeping in atomic (MIB read under MDIO mutex from atomic ctx,
+  polled from delayed work instead), NULL deref on MT7531/7621 unbind
+  (regulator_disable on regulators only MT7530 requests), MDIO IRQ mappings left
+  to regmap-irq. Tested on MT7981. **Relevance to us: the mt7530 is tree 1 =
+  `lan5` only**, so the impact is limited to the lan5/mgmt port. Our `lan5` is
+  `NO-CARRIER` in prod, and we have already seen a lan5 link-drop quirk noted in
+  older runs — this PR is the likely fix neighbourhood if that recurs.
+- **#25058 `kernel: disable broken EEE on the MT7530 PHY`** (OPEN, 09-25):
+  backport of `ccbe7540e4aa` "net: phy: mediatek-ge: disable EEE on the MT7530
+  PHY" — on a 2-pair cable both ends advertising gigabit, the port loops instead
+  of falling back to 100M. **The commit is already in 6.18.53** (PR body says it
+  shipped in 7.2.7 / 6.18.53 / 6.12.111 on 2026-09-21), so **our `.53` branch
+  already carries it**; the PR exists only to give snapshot users it before the
+  next bump. No action.
+- **#24279 `mediatek: mt7988: add kernel ramoops region and align U-Boot pstore
+  layout`** (OPEN, 09-24): 1 MiB ramoops on BPI-R4 dtsi (128 KiB kmsg + console/
+  ftrace/pmsg zones + RS ECC), replacing the injected 64 KiB/4 KiB-record/no-ECC
+  default that yields unreadable dumps; U-Boot side replaces the SoC-wide 64 KiB
+  node and adds the full `CMD_PSTORE_*` matrix for all six BPI-R4 defconfigs.
+  **Scope: BPI-R4, not the 8x** — but directly relevant to our pstore-recovery
+  workflow, since a bigger/ECC'd ramoops is what makes panic capture readable on
+  these boards. Worth mirroring for the 8x if we ever want reliable crash dumps.
+- #24038 nft_flow_offload bridge offload, #24806 qualcommax qca_ppe, #24820
+  Keenetic KN-1012: out of scope.
+
+**netdev / upstream:**
+- **RSS/LRO series still at v8** (May 2026); no v9. Patchew still lists it as
+  "there is a newer version" pointing at v8, so nothing new landed.
+- The series' own notes confirm **iperf2 (not iperf3) is needed to reach full
+  throughput**, and that `ethtool -N ... flow-type tcp4 dst-ip` + `-K lro on`
+  is the LRO enable path — matches our decision to stay RSS-only.
+
+**forum.banana-pi.org:**
+- **#17248 (jumbo)** — and this is the notable one: the actual post numbers here
+  are `posts_count 87`, and the **latest posts are ours and frank's**:
+  `#88 rbtree (2026-09-22)` = the iperf2 3-node matrix (we posted it), and
+  `#89 frank-w (2026-09-23)` = *"You use multiple (-P4 param afair) streams? but
+  i think we should continue this discussion in a RSS/LRO thread as this is for
+  jumbo-frames. e.g. this: [BPI-R4] LRO/RSS etc upstreamed? or even a new
+  specific to non-upstream openwrt"*. **Action pending: frank asked us to move
+  the RSS/LRO discussion out of the jumbo thread.** (Earlier note claiming
+  new posts #84–#89 with content differing from this was a misread of the page
+  ordering; the authoritative JSON shows 87 posts ending at #89.)
+- **#26071 (LRO/RSS)** — last activity **2026-09-04**, 18 posts. Latest: #15
+  frank ("some corner cases not clean"), #16 **meehien** ("HW LRO on MT7988A: the
+  engine picks up only a tiny fraction of a learned flow, and every pickup causes
+  a TCP retransmit ... measured HW LRO behaviour rather than throughput"), #17
+  frank (suggests disabling `MTK_RSS` to test LRO-only), #18 rmandrad (long read:
+  `mtk_hwlro_stats_ebl` is declared and written but **read nowhere**;
+  `hw_lro_stats_update()` has **no call site** — `mtk_poll_rx` never invokes it,
+  so HW-LRO stats are dead on 7.2). This is the thread frank points us to, and it
+  independently corroborates our no-HWLRO decision.
+
+**frank-w:**
+- `openwrt@R4Pro_RSS` unchanged since 2026-09-20 (`1c4bf57a2`) — still one commit
+  behind our cancel-before-free ordering fix (`b277debe8`).
+- kernel `7.3-jumbo` (09-07) / `7.2-jumbo` (09-06) carry the rings-only realloc
+  (`f2d6ce7925`); `6.18-jumbo` unchanged since 2025-11.
+
+**ACTION items from this sweep:**
+1. Decide whether to re-base onto `.54` (or wait for `.54`+ to settle); `.53`
+   already gives us the upstreamed EEE work, so the CAPS hunk fix stays valid.
+2. Consider `#25383` (mt7530 stats64/unbind) if the lan5 mgmt port misbehaves.
+3. Optionally mirror `#24279`'s 1 MiB ECC ramoops for the 8x to get readable
+   panic dumps (would have helped during the skb_over_panic work).
+4. Reply to frank in **#26071** (not #17248) as he asked, with the iperf2 numbers
+   and the branch pointer.
