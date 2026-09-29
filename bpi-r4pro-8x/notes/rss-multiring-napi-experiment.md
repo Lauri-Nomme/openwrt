@@ -1622,3 +1622,81 @@ the green `b277debe8`. Notes-only pushes show the same pattern.
    panic dumps (would have helped during the skb_over_panic work).
 4. Reply to frank in **#26071** (not #17248) as he asked, with the iperf2 numbers
    and the branch pointer.
+
+### Upstream / PR / forum sweep (2026-09-29)
+
+**HEADLINE: our 980 is being upstreamed.** patchwork `netdevbpf` shows a series
+"[net] net: ethernet: mtk_eth_soc: allocate dummy netdev":
+  - 2026-09-15  net: ...: allocate dummy netdev before registering netdevs (v1)
+  - 2026-09-20  [net,v2] ... allocate dummy netdev before registering netdevs
+  - 2026-09-24  [net,v3] net: ethernet: mtk_eth_soc: allocate dummy netdev
+- This is the same fix as our `980` (allocate `eth->dummy_dev` + NAPI before
+  `register_netdev`), now in mainline review for `net` (i.e. targeted at
+  net.git / stable backport, not net-next). v3 subject was shortened.
+- **Implication:** `980` is on track to become upstream and can then be dropped
+  from our series. Until then it stays. Also means our `980` will eventually
+  conflict with the upstream version's hunk offsets — re-check on the next
+  rebase and drop it once the base kernel carries it.
+- Related adjacent upstream activity in our area:
+  - 2026-09-16  [net] mtk_eth_soc: **unregister net_devices in case of probe
+    failure** (3 postings) — probe error-path cleanup, overlaps the cleanup
+    ordering we touched around `980`.
+  - 2026-09-03  [net,v5,2/2] mtk_eth_soc: **populate lpi_interfaces to fix EEE**
+    — this is the EEE work; it is what got **removed as upstreamed in 6.18.53**
+    (see #25331) and is why our `760-22/23` CAPS hunk fix exists.
+  - 2026-09-22  [RFC,4/5] mtk_eth_soc: **query the wireless driver for the flow
+    table** — WED/flowtable offload interplay, out of our scope but adjacent to
+    the flowtable work.
+
+**RSS/LRO series status: still v8** (patchwork: newest = 2026-05-09 v8). No v9.
+So nothing new to port; our RSS port remains ahead of upstream.
+
+**openwrt/openwrt:**
+- **#24897 "Add BPI-R4 pro 4e variant" — MERGED 2026-09-28.** Touches
+  `uboot-mediatek/Makefile` + new `473-add-bpi-r4-pro-4e.patch`,
+  `uboot-envtools/files/mediatek_filogic`, `base-files/.../99_fwenv-store-ethaddr.sh`,
+  `filogic/base-files/.../01_leds`, `02_network`, `lib/upgrade/platform.sh`,
+  `image/filogic.mk`, and new DTS `971-...-4e` + `972-...-aliases`.
+  **Checked against our 29 changed files: ZERO overlap** — the 4e merge can be
+  taken cleanly on top of our branch (no conflict in `filogic.mk`, `02_network`,
+  `platform.sh`, or our `973`/`472`/`050` patches). The 4e is 4 GB RAM, no
+  Aeonsemi 10G PHYs, WAN via the internal 2.5G PHY with overlays for phy/SFP.
+- **#25331 bump 6.18 to 6.18.53 and .54** — still OPEN, updated 09-29.
+- **#25383 mt7530 unbind + stats64 fixes** — OPEN, updated 09-29 (three 6.18.y
+  backports). Impact limited to our mt7530 tree (lane5/mgmt).
+- **#25247 "kernel: backport patches to Fix vlan issues on MT7530"** (OPEN,
+  09-29, +256/-0): VLAN was unusable on MT7530; backports 2 patches from 7.1
+  to 6.18 on top of two already in -stable. Fixes #18576. **Relevance: MT7530 =
+  our `lan5` mgmt port**; if we ever put VLANs on lan5 this matters.
+- **#25206 backport MT7530 broken-EEE fix to 25.12 (6.12)** — 25.12-only twin of
+  #25058; 6.18 already has it (in .53). No action.
+- #25058 (6.18 broken-EEE) still OPEN but superseded by the native .53 inclusion.
+- #25475 econet Zyxel, #25330 econet DSA, #20104 airoha, #22460 Archer BE805,
+  #25096 Benton, #24038 nft_flow_offload, #24806 qca_ppe: out of scope.
+
+**forum.banana-pi.org:** no new posts since the 09-26 sweep.
+- #17248 (jumbo) unchanged: 87 posts, last 2026-09-23 (#89 frank asking to move
+  the RSS/LRO discussion elsewhere). Our iperf2 matrix (#88) still the last
+  technical post.
+- #26071 (LRO/RSS) unchanged: 18 posts, last 2026-09-04 (#18 rmandrad: dead
+  `mtk_hwlro_stats_ebl` / `hw_lro_stats_update()` with no call site).
+
+**frank-w:**
+- `openwrt@R4Pro_RSS` unchanged since 2026-09-20 (`1c4bf57a2`) — still one commit
+  behind our cancel-before-free ordering fix (`b277debe8`).
+- kernel `7.3-rc` moved 2026-09-23 (`Revert "phy: mtk-xfi: add
+  mtk_xfi_tphy_valid_ctle for use in usxgmii"`); `7.3-jumbo` unchanged (09-07).
+
+**our fork:** `bpi-r4pro-8x-multiring-6.18.53` CI green through `1f96c1c5a`;
+head `c971c49b4d` is notes-only.
+
+**ACTION items (updated):**
+1. `980` is being upstreamed (v3, 09-24) — expect to drop it once the base
+   kernel / net.git carries it; re-check hunk offsets each rebase until then.
+2. `#24897` 4e merge is conflict-free with us — cheap to take on the next rebase
+   if we want 4e support in the same branch.
+3. Consider `#25383` (mt7530 stats64) and `#25247` (mt7530 VLAN) only if we use
+   `lan5` (mt7530) for anything beyond plain mgmt.
+4. Reply to frank in **#26071** (as he asked in #17248 #89) with the iperf2
+   numbers + branch pointer — still outstanding.
+5. Optional: mirror #24279's 1 MiB ECC ramoops for the 8x.
