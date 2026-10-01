@@ -1700,3 +1700,68 @@ head `c971c49b4d` is notes-only.
 4. Reply to frank in **#26071** (as he asked in #17248 #89) with the iperf2
    numbers + branch pointer — still outstanding.
 5. Optional: mirror #24279's 1 MiB ECC ramoops for the 8x.
+
+### Upstream / PR / forum sweep (2026-10-01)
+
+**openwrt/openwrt:**
+- **#25331 "kernel: bump 6.18 to 6.18.53 and .54" — MERGED 2026-09-30.** main is
+  now on **`LINUX_VERSION-6.18 = .54`**. Our branch base (`a032e2fd7d`) was the
+  PR's earlier `.53` head, so main has moved 248 commits past us.
+  - `.54` also **merged the BPI-R4 Pro 4E support** (`7a29a6bf6b`), so main now
+    carries mediatek patches `971-...-4e` + `972-...-aliases` alongside the
+    existing `973-...-add-phys`. Our `979`/`980` slots are still free (verified),
+    so a rebase onto current main remains structurally clean.
+  - 6.18.y-relevant deltas in the range that touch our IP: `a83663424d generic:
+    backport MXL86211C 2.5G support`, `5dcf6a3b3d generic: backport phylink fix
+    for a PHY recorded before bringup fails`, and the RTL8261C/D PHY series
+    (`393bd191d4`, `51478f3122`, `fce07ce378`, `714786c3d3`, `76da1ee259
+    harden RTL826x PHY match, EEE and soft-reset`). None touch mtk_eth_soc's
+    RX/RSS/jumbo paths; the MXL86211C 2.5G and phylink-PHY-bringup ones are
+    adjacent to our MxL/phylink interests and worth having.
+  - **Implication:** the next natural rebase target is main @ `.54`, not the
+    `.53` head we sit on. Cheap (main already holds 4E + our slots free), and
+    picks up the MxL/phylink/RTL fixes.
+- **#25383 mt7530 unbind + stats64 fixes** — OPEN, updated 10-01 (still the three
+  6.18.y backports; mt7530 = our lan5/mgmt only).
+- **#25247 mt7530 VLAN fixes** — OPEN, 09-29 (mt7530 scope).
+- **#24279 mt7988 ramoops + U-Boot pstore layout** — OPEN, 09-29 (BPI-R4 scope;
+  our 8x candidate for readable panic dumps).
+- New in our neighbourhood: **#25498 Keenetic KN-3910**, **#25489 urant u28
+  ax3000**, **#25475 econet Zyxel**, **#24557 ramips mt7620 MediaTek Ethernet**
+  — all out of scope for the 8x.
+- #22460 Archer BE805, #24806 qca_ppe: out of scope.
+
+**netdev / upstream:**
+- **Our `980` is still at `[net,v3]` (2026-09-24)**, no v4 — patchwork newest for
+  "allocate dummy netdev" is v3. It is in review for `net` (stable backport
+  target), so it should land in a 6.18.y at some point; until then keep our
+  `980` and re-check offsets each rebase.
+- Adjacent upstream, unchanged since last sweep: `[net] mtk_eth_soc: unregister
+  net_devices in case of probe failure` (09-16), `[net,v5,2/2] populate
+  lpi_interfaces to fix EEE` (09-03; that work is what `.53` already carries),
+  `[RFC,4/5] query the wireless driver for the flow table` (09-22).
+- **RSS/LRO series: still v8 (2026-05-09).** No v9. Nothing new to port.
+
+**forum.banana-pi.org:** no new posts.
+- #17248 (jumbo): posts=87, **last 2026-09-23** (#89 frank: move the RSS/LRO
+  discussion to #26071). Our iperf2 matrix (#88) remains the last technical post.
+- #26071 (LRO/RSS): posts=18, **last 2026-09-04** (#18 rmandrad: dead
+  `mtk_hwlro_stats_ebl` / `hw_lro_stats_update()` has no call site).
+
+**frank-w:**
+- `openwrt@R4Pro_RSS` unchanged since 2026-09-20 (`1c4bf57a2`) — **still one
+  commit behind** our cancel-before-free ordering fix (`b277debe8`).
+- kernel `7.3-jumbo` unchanged since 2026-09-07 (`f2d6ce792` rings-only realloc);
+  `7.2-jumbo` 09-06. No `7.4-*` branches yet.
+
+**our fork:** `bpi-r4pro-8x-multiring-6.18.53` CI green through `1f96c1c5a`;
+head `ae00bf0fac` is notes-only.
+
+**ACTION items (updated):**
+1. **Rebase target should be main @ 6.18.54** (post-#25331, includes 4E + MxL86211C
+   2.5G + phylink PHY-bringup + RTL826x fixes). Re-verify the §5 invariants after.
+2. `980` upstreaming (v3) — keep until the base kernel carries it, then drop.
+3. Frank asked (09-23, #17248 #89) to move RSS/LRO discussion to **#26071** —
+   still outstanding; the thread is otherwise idle since 09-04.
+4. #25383 / #25247 only if lan5 (mt7530) gains a real role.
+5. Optional: 8x ECC ramoops mirror of #24279.
