@@ -21,7 +21,7 @@ cells then make the driver read, and probe-defer on, the provider.
 
 --- a/arch/arm64/boot/dts/mediatek/mt7988a-bananapi-bpi-r4-pro.dtsi
 +++ b/arch/arm64/boot/dts/mediatek/mt7988a-bananapi-bpi-r4-pro.dtsi
-@@ -188,10 +188,14 @@
+@@ -193,10 +193,14 @@
  };
  
  &gmac0 {
@@ -36,7 +36,7 @@ cells then make the driver read, and probe-defer on, the provider.
  	phy-mode = "10gbase-r";
  	phy-connection-type = "10gbase-r";
  	status = "okay";
-@@ -203,6 +207,11 @@
+@@ -208,6 +212,11 @@
  	};
  };
  
@@ -48,7 +48,7 @@ cells then make the driver read, and probe-defer on, the provider.
  &mdio_bus {
  	clock-frequency = <12500000>;
  
-@@ -424,6 +433,24 @@
+@@ -429,6 +438,24 @@
  				address-width = <8>;
  				pagesize = <8>;
  				size = <256>;
