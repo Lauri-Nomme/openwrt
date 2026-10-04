@@ -1817,3 +1817,136 @@ head `ae00bf0fac` is notes-only.
    still outstanding, thread idle since 09-04.
 4. #25383 / #25247 only if lan5 (mt7530) gains a real role; #24279 optional for
    readable panic dumps.
+
+### Upstream pushback on RSS/LRO — verbatim record + MTK feed audit (2026-10-05)
+
+Full-fidelity record of why the multiring/RSS work is not upstream. All reviews
+are patchwork comments from **Jakub Kicinski <kuba@kernel.org>**, 2026-05-14, on
+the **v8** series (the last revision; v9 never came).
+
+#### Series: `[net-next v8 0/3] Add RSS and LRO support` (2026-05-09)
+Authors: Mason Chang <mason-cw.chang@mediatek.com>; posted by Frank Wunderlich
+<linux@fw-web.de>. Patchwork series id **1092107**. Patches:
+- `14563206` `[net-next,v8,1/3]` register definitions for RSS and LRO — state `new`
+- `14563208` `[net-next,v8,2/3]` Add RSS support — state `new`
+- `14563207` `[net-next,v8,3/3]` Add LRO support — state `new`
+
+Automated review note (Jakub -> mason/frank), verbatim header:
+> "This is an AI-generated review of your patch. The human sending this
+> email has considered the AI review valid, or at least plausible."
+
+#### RSS patch — https://lore.kernel.org/r/20260514015221.521091-1-kuba@kernel.org
+- **[High] Unsynchronised cross-CPU stats.** With up to `MTK_RX_NAPI_NUM` (=4)
+  NAPI instances polling concurrently, `eth->rx_packets`, `eth->rx_bytes` (in
+  `mtk_poll_rx`) and `eth->rx_events` (incremented in `mtk_handle_irq_rx`, which
+  is registered `IRQF_SHARED`) are **plain `u32` with no atomic, no spinlock and
+  no per-CPU storage**. Pre-patch a single `rx_napi` serialised them. The
+  corrupted values feed `dim_update_sample()` / `net_dim()`, and `eth->rx_dim`
+  is **one `struct dim` shared across all RX NAPIs**. Kuba: "Are these
+  unsynchronised cross-CPU updates intentional?"
+- **[Medium] `mtk_handle_status_irq()` race.** Every `mtk_napi_rx` poll calls it;
+  it does an **unprotected read/clear of `MTK_INT_STATUS2`** and can call
+  `mtk_stats_update()`. With multiple pollers on different CPUs a fresh AF event
+  between read and write can be dropped, or stats double-counted. The per-MAC
+  `stats_lock` inside `mtk_stats_update_mac` does **not** synchronise the status
+  read/clear.
+- Style: *"reverse xmas tree should be followed, please fix everywhere in this
+  submission"*.
+- Process: *"Would be great to split this up a little more for ease of review."*
+
+#### LRO patch — https://lore.kernel.org/r/20260514015224.521125-1-kuba@kernel.org
+- **[High] page_pool policy regression (the big one).** The patch changes
+  `if (mtk_page_pool_enabled(eth))` -> `if (mtk_page_pool_enabled(eth) &&
+  rcu_access_pointer(eth->prog))` in `mtk_rx_alloc()`. Kuba: *"the subject is
+  'Add LRO support' but this hunk changes the page_pool creation policy for
+  every netsys v2+ chip."* Because `mtk_xdp_setup()` rejects XDP with
+  `-EOPNOTSUPP` when `eth->hwlro` is true, on MT7988 `eth->prog` is
+  **permanently NULL** => `mtk_create_page_pool()` is **never reached for any RX
+  ring, including non-LRO ring 0**; `mtk_ethtool_pp_stats()` goes empty; and
+  `xdp_features` still advertises `NETDEV_XDP_ACT_BASIC|REDIRECT|NDO_XMIT|
+  NDO_XMIT_SG`, diverging from actual capability.
+  (This is the direct ancestor of our `760-28`; we solved the same problem
+  differently and deliberately — see the page-pool gate.)
+- **[Medium] `MTK_PDMA_LRO_ALT_REFRESH_TIMER` not converted to `reg_map`.** Still
+  hardcoded offset `0x1c`; on v3 that lands in the **Frame Engine** register area
+  between `MTK_FE_INT_ENABLE` and `MTK_FE_INT_GRP`, while the real LRO block on
+  MT7988 is `0x6c08`-`0x6c44` per `mt7988_reg_map`. Every other LRO register in
+  the patch was converted to `reg_map` accessors.
+- **`napi_synchronize()` questioned** — https://lore.kernel.org/r/20260513185354.31e97941@kernel.org
+  *"What purpose that napi_synchronize() serve? Also we don't charge for
+  temporary variables, maybe save that `MTK_HW_LRO_RING(eth, i)` to make this
+  slightly more readable."*
+- Also flagged: DIP-table allocation policy changed from per-MAC partition to a
+  single global pool (reachability of `mtk_hwlro_netdev_enable()` questioned;
+  stale `mac->hwlro_ip[i]` vs `hwlro_ip_cnt` inconsistency), and
+  `MTK_RX_ETH_HLEN` widened 18->26 **globally** (drops `max_mtu` by 8 on every
+  supported SoC) — reviewer asked to confine it to the LRO path.
+
+#### Frank's response — https://lore.kernel.org/r/935a73a6e458b2d4fed2e59192e725483ca62126@linux.dev
+Verbatim:
+> "Hi Jakub, thanks for your review, i have to discuss the previous parts
+> (AI-review) with MTK on how to make it better. The changes there seem not
+> trivial for me and this will take some time."
+
+**=> That is the stall.** v8 2026-05-09 -> review 2026-05-14 -> "will take some
+time" -> **no v9 for ~5 months**. Not rejected; simply not resubmitted. MTK's own
+rework is (per frank, forum #26071 2026-09-04) still in progress with "some
+corner cases not clean".
+
+#### Is frank's `7.3-rsslro` bundled with HWLRO? YES
+- Branch `7.3-rsslro` = the same 3-patch v8 series snapshot (register defs +
+  **RSS** + **LRO**), commits dated 2026-05-09, last touched 2026-09-01
+  (`build.sh/defconfig`).
+- The series is *literally titled* "Add RSS and **LRO** support"; LRO is not
+  separable. => Any port of frank's RSS work must actively **drop the LRO
+  patch** — exactly what we did: `760-21..26` carry RSS only, with **no
+  `MTK_HWLRO`** on MT7988.
+
+### MTK feed audit (fresh clones, 2026-10-05)
+
+Cloned `https://github.com/mediatek/mtk-openwrt-feeds.git` (this time the repo
+only has two branches: **`main`** and **`git01`**; there is no `25.12` branch —
+my 2026-09-19 clone hit a different ref layout, and that old `/tmp/mtkfeed`
+working tree has since been emptied/rotated, so no old-vs-new file diff is
+possible for it).
+
+- **`main` HEAD** `794f99d` **2026-10-01**;
+  **`git01` HEAD** `526e416` **2026-07-01**; the two have **diverged** (git01 is
+  not an ancestor of main).
+- RSS/LRO patch sets are present on **both** branches at
+  `25.12/files/target/linux/mediatek/patches-6.12/`:
+  `999-eth-08` (reg defs), `999-eth-09` (RSS), `999-eth-10` (HW-LRO),
+  `999-eth-16` (GLO_MEM support for HW-LRO on MT7987), `999-eth-30` (default rx
+  buffer length), `999-eth-31` (9K jumbo), `999-eth-33` (dynamic rx-buffer
+  adjustment), `999-eth-35` (learning info for HWLRO), `999-eth-50` (netdev
+  restart work).
+- **git01 -> main deltas** (identical files otherwise):
+  `08`/`09`/`10`/`16`/`31` **changed**; `33` and `50` **byte-identical**.
+  - `999-eth-09` git01 **v2** -> main **v4** (adds `mtk_get_irqs_pdma()`,
+    `irq_fe`/`irq_pdma` split, `MTK_FE_IRQ_RX` macro use, ethtool RX-ring-count
+    path change, RSS capability checks, hfunc fix).
+  - `999-eth-10` git01 **v5** -> main **v7** (L4 PSH gated on
+    `mtk_is_netsys_v3_or_greater()`, `mtk_hwlro_rx_uninit()` v1-vs-v3 split for
+    the relinquish handshake, ethtool LRO-rule retrieval fix; changelog v6/v7).
+  - `999-eth-16` v2 (MT7987 GLO_MEM) and `999-eth-31` also differ.
+- **The feed is OLDER than upstream v8**: RSS is at **v4** and LRO at **v7**
+  (both dated Oct 2025), whereas the upstream series reached **v8** (May 2026)
+  and then stalled. So the "MTK rework" that frank referenced has **not** shown
+  up in the feed either.
+- **No mescheen-style LRO rework in the feed**: no new patch addressing the
+  packet-ordering/aggregation-fraction problem; the LRO patch is the same
+  v7 content.
+- **Dead HW-LRO stats still present**: the feed's `999-eth-10` still only
+  `extern`-declares `mtk_hwlro_stats_ebl`, and `hw_lro_stats_update()` still has
+  **no call site** — corroborating rmandrad's finding (forum #26071 #18) that
+  HW-LRO statistics are dead code on 7.2 and in the feed.
+
+### Bottom line
+The RSS/LRO work is stalled on (a) **LRO being bundled and being genuinely weak**
+(terminating-only, 2-4 IPs, low aggregation fraction, retransmit-inducing per
+mescheen; dead stats per rmandrad), (b) the **page_pool policy regression** the
+LRO patch introduces, and (c) **cross-CPU stats-accounting/IRQ races** in the
+RSS side that a reviewer considered High severity. None of those apply to the
+**RSS-only, no-HWLRO subset** we ship (`760-21..26`): we never touch the
+page_pool policy for XDP (we gate on jumbo MTU instead, `760-28`), and our RSS
+path has been live-verified (4 rings firing, per-ring IRQs, ~9.9 Gbit/s).
