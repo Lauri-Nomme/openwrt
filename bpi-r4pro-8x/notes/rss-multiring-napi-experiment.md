@@ -1765,3 +1765,55 @@ head `ae00bf0fac` is notes-only.
    still outstanding; the thread is otherwise idle since 09-04.
 4. #25383 / #25247 only if lan5 (mt7530) gains a real role.
 5. Optional: 8x ECC ramoops mirror of #24279.
+
+### Upstream / PR / forum sweep (2026-10-05)
+
+**openwrt/openwrt:**
+- **main is now on 6.18.55** (`db9616b9af`, PR #25551, merged 10-04). 72 commits past
+  our `.54` base (`4fed8d3c79`). `.55` itself is a routine bump: **removed only**
+  `backport-6.18/707-v7.3-net-phylink-record-the-PHY-only-once-bringup-cannot-`
+  (upstreamed as `4e7a4af364c2`); everything else auto-rebased. **Nothing touching
+  mtk_eth_soc / RSS / jumbo / mxl862xx in the .54 -> .55 range.** A rebase to .55
+  would be inexpensive but has no functional payoff for us.
+- No movement on our tracked PRs: #25383 (mt7530 stats64/unbind, 10-03),
+  #25247 (mt7530 VLAN, 09-29), #24279 (ramoops, 09-29), #25206/#25058 (MT7530
+  EEE, 25.12-only / superseded by .53) — all still OPEN.
+- #24784 "backport MTK WED 2.0 WDMA TX hang fix" still OPEN (10-03) — WED/TX
+  path, adjacent to our PPE/flowtable interest but not our RX work.
+- #25567 "[25.12] mt76: cherry pick upstream Linux patches from 6.18.55" OPEN —
+  25.12 backport of mt76 deltas; no 8x impact.
+- New device PRs (Adtran SDG-9000 #25600, JioExtender JE6000/JioRouter #25563,
+  Huastlink HC-G80 #25045, TP-Link VX830v #24108, Keenetic KN-3910 #25498,
+  Archer BE805 #22460): all out of scope.
+
+**netdev / upstream:**
+- **Our `980` is still `[net,v3]` (09-24)** — no v4 in ~11 days. Adjacent
+  `[net] unregister net_devices in case of probe failure` (09-16) also unchanged.
+- **RSS/LRO series: still v8 (2026-05-09).** No v9. frank's `7.3-rsslro` branch is
+  just the v8 snapshot (last real commit 2026-05-09, plus a 09-01 build.sh touch).
+
+**forum.banana-pi.org:** completely idle.
+- #17248 (jumbo): posts=87, last **2026-09-23** (#89 frank: move RSS/LRO to #26071).
+- #26071 (LRO/RSS): posts=18, last **2026-09-04**.
+- A search for new r4pro-8x RSS/jumbo topics since 09-25 returned nothing.
+
+**frank-w:**
+- `openwrt@R4Pro_RSS` unchanged since 2026-09-20 (`1c4bf57a2`) — **still one commit
+  behind** our cancel-before-free ordering fix (`b277debe8`).
+- kernel `7.3-jumbo` unchanged since 09-07; `7.3-rsslro` = v8 snapshot (no news).
+
+**our fork:** `bpi-r4pro-8x-multiring-6.18.54` CI green at `44d7413bb`.
+`bpi-r4pro-8x-multiring-6.18.53` unchanged.
+
+**banana (on .54 since the 10-01 flash):** 2 days uptime, 47 C, MACs
+`…2f:60/61/62` (post-`fw_setenv eth1addr` fix, holding), WAN up
+`82.131.28.62/22`, 4 RSS IRQs firing, **0** panics/warnings. Stable.
+
+**ACTION items (unchanged):**
+1. Rebase target: main @ `.55` is available but carries nothing we need; `.54` is
+   fine to stay on until something relevant lands.
+2. `980` upstreaming (v3) — keep until the base kernel carries it.
+3. Frank asked (09-23, #17248 #89) to move the RSS/LRO discussion to **#26071** —
+   still outstanding, thread idle since 09-04.
+4. #25383 / #25247 only if lan5 (mt7530) gains a real role; #24279 optional for
+   readable panic dumps.
