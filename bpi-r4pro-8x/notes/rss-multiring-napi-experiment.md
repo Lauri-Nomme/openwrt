@@ -1950,3 +1950,56 @@ RSS side that a reviewer considered High severity. None of those apply to the
 **RSS-only, no-HWLRO subset** we ship (`760-21..26`): we never touch the
 page_pool policy for XDP (we gate on jumbo MTU instead, `760-28`), and our RSS
 path has been live-verified (4 rings firing, per-ring IRQs, ~9.9 Gbit/s).
+
+### Inherited upstream defects: we have BOTH (audited 2026-10-05)
+
+Kuba's two substantive review points on the v8 RSS patch are **not** frank/MTK-only
+— our port (`760-21..26`, derived from the same code) carries **identical**
+defects. Audited in `build_dir/.../linux-6.18.54/`:
+
+**(1) Unsynchronised cross-CPU stats [High in review] — PRESENT.**
+- `struct mtk_eth` (`mtk_eth_soc.h:1505-1508`):
+  `u32 rx_events; u32 rx_packets; u32 rx_bytes; struct dim rx_dim;` — plain
+  `u32`s and **one shared `rx_dim`**.
+- Write sites match upstream byte-for-byte:
+  - `mtk_poll_rx()` (`mtk_eth_soc.c:2678-2682`):
+    `eth->rx_packets += done; eth->rx_bytes += bytes;
+     dim_update_sample(eth->rx_events, eth->rx_packets, eth->rx_bytes, &dim_sample);
+     net_dim(&eth->rx_dim, &dim_sample);`
+  - `mtk_handle_irq_rx()` (`mtk_eth_soc.c:3859`): `eth->rx_events++`
+    (handler registered `IRQF_SHARED`).
+- `rx_napi[MTK_RX_NAPI_NUM]` = 4 independent `struct napi`, each with its own
+  `rx_ring` (`struct mtk_napi { struct napi_struct napi; struct mtk_eth *eth;
+  struct mtk_rx_ring *rx_ring; }`).
+- **Live proof of concurrency** on the running banana (r823+28, 6.18.54), IRQs
+  pinned to 4 different CPUs:
+  ```
+  106: 16632604       0        0        0   PDMA RX 0  (CPU0)
+  107:        0 19579336        0        0   RSS RX 1   (CPU1)
+  108:        0        0  9167505        0   RSS RX 2   (CPU2)
+  109:        0        0        0 16382470   RSS RX 3   (CPU3)
+  ```
+  => the `+=` / `++` genuinely race across CPUs.
+- **Impact:** lost updates on counters -> wrong `dim_update_sample()` inputs ->
+  DIM/NAPI interrupt moderation mis-tuned. Accounting only. **Not** memory-unsafe,
+  not a crash, not a packet-path correctness bug (consistent with our zero
+  panics / line-rate / multi-day stability).
+
+**(2) `MTK_INT_STATUS2` read/clear race [Medium in review] — PRESENT.**
+- `mtk_napi_rx()` calls `mtk_handle_status_irq(eth)` on entry of every poll; that
+  helper does an unprotected `mtk_r32(MTK_INT_STATUS2)` -> conditional
+  `mtk_stats_update()` -> `mtk_w32(..., MTK_INT_STATUS2)`. With 4 pollers, a
+  fresh AF event between read and clear can be dropped or stats double-counted;
+  the per-MAC `stats_lock` in `mtk_stats_update_mac` does not cover the status
+  read/clear. Accounting only.
+
+**Status: INHERITED, UNFIXED, intentionally not patched.** We never claimed to
+fix these; they arrived with the RSS/multi-ring design and exist in frank's and
+MTK's copies too. This is a large part of why upstream v8 remains stalled.
+
+**Optional minimal local fixes (not applied, for reference):**
+1. Stats: per-ring counters summed at read time, or `atomic64_t` / per-CPU
+   storage; and either a per-NAPI `struct dim` or take `dim_lock` around
+   `dim_update_sample()`.
+2. Status IRQ: perform the `MTK_INT_STATUS2` read+clear under a spinlock, or stop
+   calling `mtk_handle_status_irq()` from every poll and handle AF in one place.
