@@ -1,0 +1,151 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Lauri Nomme <lauri.nomme@gmail.com>
+Date: Sun, 5 Oct 2026 03:30:00 +0300
+Subject: [PATCH] net: ethernet: mtk_eth_soc: per-ring RX counters and serialised MTK_INT_STATUS2
+
+Multi-ring NAPI gives each RX ring its own NAPI instance, and on MT7988 the
+per-ring IRQs are normally affine to four different CPUs.  Two pieces of
+state were still global and are therefore touched concurrently:
+
+  1. eth->rx_events / eth->rx_packets / eth->rx_bytes are plain u32 counters
+     written from mtk_poll_rx() and mtk_handle_irq_rx().  With up to
+     MTK_RX_NAPI_NUM pollers on different CPUs the updates race and feed
+     dim_update_sample() garbage.  (Raised as [High] in the upstream review of
+     the RSS series: https://lore.kernel.org/r/20260514015221.521091-1-kuba@kernel.org)
+
+  2. mtk_handle_status_irq() reads MTK_INT_STATUS2, and if the AF bit is set
+     calls mtk_stats_update() and clears those bits.  It is called from every
+     RX NAPI poll *and* from the TX poll, so several CPUs can run it at once.
+     The clear is a write-1-to-clear and is not atomic with the preceding
+     read, so a concurrent AF event can be dropped, or observed by two CPUs
+     and counted twice.  (Raised as [Medium] in the same review.)
+
+rx_packets/rx_bytes move into struct mtk_rx_ring: they are plain
+accumulators written on every poll, so a poll should touch only memory it
+owns -- no lock and no shared cache line on the hot path.
+
+rx_events deliberately stays global.  net_dim() does not use the event count
+as a plain accumulator: it computes the *difference* between two event_ctr
+values with BIT_GAP() against the sample it is currently measuring from, so it
+requires one monotonic sequence.  Four per-ring event counters would be four
+unrelated sequences, and a measurement started from one ring's sample and
+completed by another's would produce a meaningless delta.  The packet/byte
+counters have no such requirement, which is why only they are split.
+
+struct dim also stays global: the PDMA delay register that DIM drives exposes
+only two 16-bit per-ring fields (see below), so a per-ring dim would mean four
+writers full-word-clobbering a two-field register.  One dim keeps the
+single-writer property and programs both halves from one profile.
+
+For the status IRQ the lock is taken only on the branch where the AF bit was
+already seen set, so the common path stays lock-free and there is no
+contention at line rate.
+
+Signed-off-by: Lauri Nomme <lauri.nomme@gmail.com>
+---
+--- a/drivers/net/ethernet/mediatek/mtk_eth_soc.c
++++ b/drivers/net/ethernet/mediatek/mtk_eth_soc.c
+@@ -2675,11 +2675,17 @@ rx_done:
+ 		mtk_update_rx_cpu_idx(eth, ring);
+ 	}
+ 
+-	eth->rx_packets += done;
+-	eth->rx_bytes += bytes;
+-	dim_update_sample(eth->rx_events, eth->rx_packets, eth->rx_bytes,
+-			  &dim_sample);
+-	net_dim(&eth->rx_dim, &dim_sample);
++	/* Per-ring accounting: this runs on several CPUs at once with
++	 * multi-ring NAPI, and dim_update_sample() reads a clock, so it is
++	 * only sampled when the ring actually did work.
++	 */
++	if (done) {
++		ring->rx_packets += done;
++		ring->rx_bytes += bytes;
++		dim_update_sample(eth->rx_events, ring->rx_packets,
++				  ring->rx_bytes, &dim_sample);
++		net_dim(&eth->rx_dim, &dim_sample);
++	}
+ 
+ 	if (xdp_flush)
+ 		xdp_do_flush();
+@@ -2840,13 +2846,24 @@ static int mtk_poll_tx(struct mtk_eth *e
+ 
+ static void mtk_handle_status_irq(struct mtk_eth *eth)
+ {
+-	u32 status2 = mtk_r32(eth, MTK_INT_STATUS2);
++	u32 status2;
++
++	/* Called from every RX NAPI poll and from the TX poll, so with
++	 * multi-ring NAPI several CPUs execute this concurrently.  The AF
++	 * (address found) event is rare, so the common case returns before
++	 * taking the lock and the poll path stays lock-free.
++	 */
++	status2 = mtk_r32(eth, MTK_INT_STATUS2);
++	if (!(status2 & (MTK_GDM1_AF | MTK_GDM2_AF)))
++		return;
+ 
+-	if (unlikely(status2 & (MTK_GDM1_AF | MTK_GDM2_AF))) {
++	spin_lock(&eth->status_lock);
++	status2 = mtk_r32(eth, MTK_INT_STATUS2);
++	if (status2 & (MTK_GDM1_AF | MTK_GDM2_AF)) {
+ 		mtk_stats_update(eth);
+-		mtk_w32(eth, (MTK_GDM1_AF | MTK_GDM2_AF),
+-			MTK_INT_STATUS2);
++		mtk_w32(eth, (MTK_GDM1_AF | MTK_GDM2_AF), MTK_INT_STATUS2);
+ 	}
++	spin_unlock(&eth->status_lock);
+ }
+ 
+ static int mtk_napi_tx(struct napi_struct *napi, int budget)
+@@ -6175,6 +6192,7 @@ static int mtk_probe(struct platform_dev
+ 	spin_lock_init(&eth->tx_irq_lock);
+ 	spin_lock_init(&eth->rx_irq_lock);
+ 	spin_lock_init(&eth->dim_lock);
++	spin_lock_init(&eth->status_lock);
+ 
+ 	eth->rx_dim.mode = DIM_CQ_PERIOD_MODE_START_FROM_EQE;
+ 	INIT_WORK(&eth->rx_dim.work, mtk_dim_rx);
+--- a/drivers/net/ethernet/mediatek/mtk_eth_soc.h
++++ b/drivers/net/ethernet/mediatek/mtk_eth_soc.h
+@@ -1050,6 +1050,17 @@ struct mtk_rx_ring {
+ 	/* page_pool */
+ 	struct page_pool *page_pool;
+ 	struct xdp_rxq_info xdp_q;
++
++	/* Per-ring RX accounting for adaptive interrupt moderation.
++	 *
++	 * With multi-ring NAPI every ring is polled by its own NAPI instance on
++	 * its own CPU, so a single set of eth->rx_* counters would be updated
++	 * concurrently by up to MTK_RX_NAPI_NUM CPUs with no serialisation.
++	 * These counters exist only to feed DIM, so keeping them per ring
++	 * removes the shared cache line from the poll path entirely.
++	 */
++	u64 rx_packets;
++	u64 rx_bytes;
+ };
+ 
+ /* struct mtk_rss_params -	This is the structure holding parameters
+@@ -1502,9 +1513,21 @@ struct mtk_eth {
+ 
+ 	spinlock_t			dim_lock;
+ 
++	/* Serialises the MTK_INT_STATUS2 read/clear in mtk_handle_status_irq().
++	 * That routine is called from every RX NAPI poll plus the TX poll, so
++	 * with multi-ring NAPI several CPUs can run it at once; the clear is a
++	 * write-1-to-clear and is not atomic with the preceding read, so a
++	 * concurrent AF event can be dropped or double-counted.
++	 */
++	spinlock_t			status_lock;
++
++	/* rx_packets/rx_bytes live per ring (struct mtk_rx_ring); rx_events
++	 * stays global because net_dim() derives its event count from the
++	 * difference between two event_ctr values (BIT_GAP), which requires a
++	 * single monotonic sequence.  rx_dim is global too: the PDMA delay
++	 * register has only two 16-bit per-ring fields, so it has one writer.
++	 */
+ 	u32				rx_events;
+-	u32				rx_packets;
+-	u32				rx_bytes;
+ 	struct dim			rx_dim;
+ 
+ 	u32				tx_events;

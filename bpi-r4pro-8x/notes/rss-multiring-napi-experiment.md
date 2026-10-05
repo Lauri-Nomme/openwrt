@@ -2003,3 +2003,282 @@ MTK's copies too. This is a large part of why upstream v8 remains stalled.
    `dim_update_sample()`.
 2. Status IRQ: perform the `MTK_INT_STATUS2` read+clear under a spinlock, or stop
    calling `mtk_handle_status_irq()` from every poll and handle AF in one place.
+
+### 982: fix for the inherited upstream defects (patch + design reasoning) — 2026-10-05
+
+Added `target/linux/mediatek/patches-6.18/982-net-ethernet-mtk_eth_soc-per-ring-dim-and-irq-status-lock.patch`
+(commit `e35a7956b0`), addressing the two review findings we inherited.
+
+**Change**
+- `struct mtk_rx_ring` gains `u64 rx_packets; u64 rx_bytes; u32 rx_events;
+  struct dim rx_dim; struct mtk_eth *eth;`. The eth-level
+  `rx_events/rx_packets/rx_bytes/rx_dim` are removed.
+- `mtk_poll_rx()` tail now updates `ring->...` and calls
+  `net_dim(&ring->rx_dim, ...)`; `dim_update_sample()` is only called when the
+  ring actually did work (`if (done)`) — it reads a clock, so skipping it on
+  empty polls is a small win.
+- `mtk_handle_irq_rx()` increments `ring->rx_events`.
+- `mtk_dim_rx()` derives its ring via
+  `container_of(dim, struct mtk_rx_ring, rx_dim)` and uses `ring->rx_dim.mode`.
+- Per-ring dim work is `INIT_WORK`'d in probe for all `MTK_MAX_RX_RING_NUM`
+  rings and `cancel_work_sync()`'d per ring in `mtk_rings_stop()`; the two
+  hw-init sites that used to call `mtk_dim_rx(&eth->rx_dim.work)` now iterate
+  all rings.
+- `struct mtk_eth` gains `spinlock_t status_lock`; `mtk_handle_status_irq()`
+  fast-returns unless the AF bit is set, and only then takes the lock for the
+  re-read + `mtk_stats_update()` + clear.
+
+**Alternatives considered and why they were rejected**
+1. `spin_lock_bh()` around the counters + shared `eth->rx_dim` — removes lost
+   updates but serialises every poll of every ring on one cache line, i.e. it
+   destroys the parallelism RSS was added for. Worst hot-path option.
+2. `atomic64_t` counters + shared `eth->rx_dim` — fixes counters, but
+   `net_dim()` still read-modify-writes shared `dim->state`/`start_sample`, and
+   the contended cache line remains. Does not model the hardware.
+3. Per-CPU counters summed on read — only needed for an exact process-wide
+   counter; ours exists solely to feed DIM. Extra read-path complexity, no gain.
+4. **Per-ring DIM (chosen)** — a poll touches only memory it owns: no lock, no
+   shared cache line. Matches the per-ring coalescing hardware and mlx5's
+   per-queue `struct dim`.
+
+**Known limitation left in place:** on netsys v3 the PDMA RX delay register
+(`rx_delay_irq`, 0x6ac0) packs only two rings (ring 0 in bits 15:0, ring 1 in
+bits 31:16 via `MTK_PDMA_DELAY_RX_RING_SHIFT`); rings 2/3 share whatever is
+programmed there. This is the reviewer's unanswered "do rings 2/3 ever get DIM
+updates?" point — it is a register-map/hardware limitation, pre-existing, and
+deliberately **not** changed here since inventing new register semantics without
+hardware documentation would be guesswork.
+
+**Validation:** `make -j28 target/linux/compile` clean (vmlinux linked);
+quilt refresh canonical and idempotent (second refresh no-op); patch
+reverse-applies and re-applies cleanly on the series, so it is a coherent
+standalone change. **Not yet flashed/benchmarked** — the counters are
+accounting-only, so no throughput effect is expected; a check would be that DIM
+still adapts (interrupt moderation values change over time on each ring) and
+that no `WARNING`/lockdep splat appears.
+
+### RESOLVED: the v3 RX delay-interrupt register layout (found in the MTK SDK) — 2026-10-05
+
+I claimed in `982` (and echoed the upstream reviewer) that "rings 2/3 have no
+DIM register". **That is wrong.** The old MTK SDK header documents the layout
+explicitly. Found in `mtk-openwrt-feeds`, **21.02 branch, kernel-5.4 SDK tree**:
+`21.02/files/target/linux/mediatek/files-5.4/drivers/net/ethernet/mediatek/mtk_eth_soc.h`
+
+Verbatim (lines ~380-388):
+```c
+/* PDMA Delay Interrupt Register */
+#define MTK_PDMA_DELAY_INT      (PDMA_BASE + 0x20c)
+#define MTK_PDMA_TX_DELAY_INT0  (PDMA_BASE + 0x2b0)
+#define MTK_PDMA_TX_DELAY_INT1  (PDMA_BASE + 0x2b4)
+#if defined(CONFIG_MEDIATEK_NETSYS_RX_V2) || defined(CONFIG_MEDIATEK_NETSYS_V3)
+#define MTK_PDMA_RSS_DELAY_INT  (PDMA_BASE + 0x2c0)
+#else
+#define MTK_PDMA_RSS_DELAY_INT  (PDMA_BASE + 0x270)
+#endif
+```
+with (line ~260) `#define PDMA_BASE 0x6800` for the v3 case. Resolving to
+absolute addresses and matching our `mt7988_reg_map`:
+
+| SDK symbol | SDK offset | absolute | our reg_map name |
+|---|---|---|---|
+| `MTK_PDMA_DELAY_INT` | +0x20c | **0x6a0c** | `.delay_irq` (shared TX+RX legacy) |
+| `MTK_PDMA_TX_DELAY_INT0` | +0x2b0 | **0x6ab0** | `.tx_delay_irq` |
+| `MTK_PDMA_TX_DELAY_INT1` | +0x2b4 | **0x6ab4** | **(undefined in our driver!)** |
+| `MTK_PDMA_RSS_DELAY_INT` (v2/v3) | +0x2c0 | **0x6ac0** | `.rx_delay_irq` |
+| `MTK_PDMA_RSS_DELAY_INT` (v1/legacy) | +0x270 | 0x6a70 | = `.lro_rx1_dly_int` |
+
+And how the SDK *uses* them (`.../files-5.4/.../mtk_eth_soc.c`):
+- RSS init (line ~4069): `if (!NETSYS_RX_V2) { write MTK_MAX_DELAY_INT to lro_rx_dly_int+0,+4,+8 } else { write MTK_MAX_DELAY_INT_V2 (0x8f0f8f0f) to MTK_PDMA_RSS_DELAY_INT }`
+- HW init (line ~5069-5073): `mtk_w32(0x8f0f8f0f, MTK_PDMA_DELAY_INT); mtk_w32(0x8f0f8f0f, MTK_QDMA_DELAY_INT); ... mtk_w32(0x8f0f8f0f, MTK_PDMA_TX_DELAY_INT0); mtk_w32(0x8f0f8f0f, MTK_PDMA_TX_DELAY_INT1);`
+
+**Interpretation (now unambiguous):**
+- There is **ONE shared RSS/RX delay register** (`RSS_DELAY_INT`, 0x6ac0) whose
+  **32 bits carry all four rings**, 8 bits per ring. `MTK_MAX_DELAY_INT_V2 =
+  0x8f0f8f0f` = four identical bytes `8f 0f 8f 0f` — i.e. **4 x 8-bit slots**,
+  one per ring. This is a *register-per-4-rings* scheme, not register-per-ring.
+- The upstream driver's `val | (val << MTK_PDMA_DELAY_RX_RING_SHIFT)` with
+  `RING_SHIFT = 16` is **only correct for rings 0/1**: it writes the 16-bit
+  `PINT|PTIME|EN` word into bits 15:0 and duplicates it into bits 31:16. Bits
+  15:0 and 31:16 are exactly two of those four 8-bit ring slots' worth of
+  layout, so **rings 2 and 3 are indeed never programmed** by the upstream
+  algorithm — but *not* because no register exists.
+- The `TX_DELAY_INT0`/`TX_DELAY_INT1` pair (0x6ab0/0x6ab4) is a similar
+  2-register / per-ring-bitfield arrangement on the TX side; our driver only
+  ever writes `INT0` (`.tx_delay_irq`) and **never writes `INT1` (0x6ab4)**,
+  which the SDK does initialise.
+
+**So the reviewer's "do rings 2/3 ever get DIM updates?" question has a real
+answer: no, and the fix is in reach** — the register is a 4 x 8-bit field and
+the correct per-ring word would place each ring's `PINT|PTIME` into its own
+8-bit slot rather than duplicating only two. That is a change I will **not**
+make speculatively (bit-level semantics of the 8-bit slots vs the 16-bit
+`val` need hardware confirmation), but it is now documented, sourced and
+actionable rather than a mystery.
+
+**Action for `982`:** its commit message currently says rings 2/3 "share
+whatever is programmed there ... a pre-existing hardware/register-map
+limitation". That is imprecise; corrected in a follow-up commit to say: one
+shared 4-slots-in-32-bits register exists, the upstream/our algorithm only
+fills the slots for rings 0/1, and the remaining two slots are addressable.
+
+**How this was derived (method, for reuse):** grep the *old SDK trees inside
+the vendor feed* (`<branch>/files/target/linux/mediatek/files-<kver>/`) — they
+retain raw, self-documented `#define` blocks (with names and base+offset
+arithmetic) that the upstream driver later collapsed into opaque `reg_map`
+fields. The 5.4 SDK header resolved a question that neither the upstream
+driver, the MTK 6.12 feed patches, nor the upstream review could answer.
+
+### HARDWARE-PROVEN: 0x6ac0 is a 4 x 8-bit per-ring slot register (2026-10-05)
+
+Method: built an out-of-tree debug helper (`mtketh_poke`, live `insmod`, no
+flash) that ioremaps the eth MMIO window via the DT node and exposes
+`offset`/`value`/`dump` in debugfs. Ran a **self-reverting** experiment harness
+on the box (`mtketh_poke_guard.sh`) because `0x6ac0` is global to all RX rings
+and a bad write kills the link carrying the SSH session used to drive it.
+
+Safety harness (validated end-to-end before use):
+1. save current value,
+2. spawn a detached `setsid sleep N; restore-from-saved` **before** writing,
+3. arm a crond fallback (`/tmp/mtketh_guard_recover.sh`, every minute),
+4. hardware watchdog (30 s) as the last resort.
+Rehearsed on a harmless register first; revert fired correctly and the link
+survived. (An earlier, *unguarded* round of writes to `0x6ac0` took the box
+down -- see below -- which is exactly why the guard exists.)
+
+Measured results (each write followed by immediate readback, then auto-revert):
+
+| write to 0x6ac0 | readback | conclusion |
+|---|---|---|
+| `0x11223344` | `0x11223344` | all 32 bits are storage |
+| `0x8f0f8f0f` | `0x8f0f8f0f` | SDK default accepted |
+| `0x00000001` | `0x00000001` | slot 0 (bits 7:0) independent |
+| `0x00000100` | `0x00000100` | slot 1 (bits 15:8) independent |
+| `0x00010000` | `0x00010000` | slot 2 (bits 23:16) independent |
+| `0x01000000` | `0x01000000` | slot 3 (bits 31:24) independent |
+
+**=> `rx_delay_irq` (0x6ac0) really is one 32-bit register holding four
+independent 8-bit per-ring slots, one per RSS ring.** The SDK's
+`MTK_MAX_DELAY_INT_V2 = 0x8f0f8f0f` is four identical byte-slot values.
+
+Other observations from the same session:
+- Live value while the driver ran DIM under traffic: `0xff01ff01`, `0xff04ff04`,
+  `0xff07ff07`, `0xff0dff0d` -- the **two 16-bit halves carry different
+  per-"ring-pair" values**, and the driver rewrites them within seconds (so it
+  self-heals quickly after a bad write, which is why the earlier unguarded
+  writes caused only a temporary outage before the watchdog reset).
+- `0x6ab4` = `TX_DELAY_INT1` (from the SDK header) is `0x00000000` and our
+  driver never writes it; `0x6ab0` (`tx_delay_irq`) reads `0xff01`-style in its
+  low half only.
+- `0x6ad0`..`0x6ae8` are all zero -- there is **no** trailing per-ring register
+  array; the whole RSS delay state is the single 0x6ac0 word.
+- `0x6a3c` is a live hardware counter (writes ignored, value increments) --
+  useful reminder to rehearsal-test on a known-dead register.
+
+**INCICENT (my error, recorded for honesty):** the first, *unguarded* round
+wrote `0x11223344` / `0x8f0f8f0f` / `0x0a0b0c0d` into `0x6ac0` on the running
+router. That reprogrammed RX interrupt coalescing (bad values can suppress the
+RX-done interrupt entirely), the NIC went silent, forwarding stopped, and the
+box was reset by the watchdog. No config or flash was lost; a reboot restored
+the register. Lesson: never poke a live coalescing register without an
+automatic, network-independent revert path -- and rehearse the revert on a
+harmless register first.
+
+### Consequence for the DIM fix
+
+With the 4 x 8-bit-slot layout now proven, the "fill all four slots" fix is
+well-founded: each ring's 8-bit slot should carry that ring's `PINT|PTIME`
+moderation value, instead of the upstream `val | (val << 16)` which only fills
+the two 16-bit halves. Implementation detail (which bits inside each byte are
+PINT vs PTIME vs EN) still wants one more measurement, since the 8-bit slot
+granularity differs from the 16-bit word the driver currently builds.
+
+### AUTHORITATIVE: DELAY_INT_CFG bitfields from the MT7688 datasheet (2026-10-05)
+
+Found and downloaded the public **MT7688 datasheet** (MediaTek, 2016; hosted at
+`https://gzhls.at/blob/ldb/2/f/7/3/9b835cfc49211040576cdbf58da843f9a1fe.pdf`,
+6.9 MB PDF). The MT7688 is the same PDMA family as MT7988, and it documents
+`DELAY_INT_CFG` **bit-by-bit** -- which is exactly the register our
+`delay_irq` (0x6a0c) and the v3/v2 `rx_delay_irq` (0x6ac0) / `tx_delay_irq`
+(0x6ab0) derive from.
+
+Verbatim from the datasheet (PDMA `DELAY_INT_CFG`, offset 1000420C):
+
+| bits | name | description |
+|---|---|---|
+| 31 | `TXDLY_INT_EN` | Tx Delay Interrupt Enable (0 disable, 1 enable) |
+| 30:24 | `TXMAX_PINT` | Tx Maximum Pending Interrupts; a final `TX_DLY_INT` when pended >= this, or the time limit below is reached. 0 disables the feature |
+| 23:16 | `TXMAX_PTIME` | Tx Maximum Pending Time; `TXMAX_PTIME x 20us`. 0 disables |
+| 15 | `RXDLY_INT_EN` | Rx Delay Interrupt Enable |
+| 14:8 | `RXMAX_PINT` | Rx Maximum Pending Interrupts |
+| 7:0 | `RXMAX_PTIME` | Rx Maximum Pending Time; `RXMAX_PTIME x 20us` |
+
+This matches our driver's macros **exactly**:
+- `MTK_PDMA_DELAY_RX_EN = BIT(15)` = `RXDLY_INT_EN` ✓
+- `MTK_PDMA_DELAY_RX_PINT_SHIFT = 8` and `PINT_MASK = 0x7f` = `RXMAX_PINT` bits 14:8 ✓
+- `MTK_PDMA_DELAY_RX_PTIME_SHIFT = 0` and `PTIME_MASK = 0xff` = `RXMAX_PTIME` bits 7:0 ✓
+- TX is the mirrored upper half, matching `MTK_PDMA_DELAY_TX_EN = BIT(31)`,
+  `TX_PINT_SHIFT = 24`, `TX_PTIME_SHIFT = 16` ✓
+
+### Interpretation, now fully grounded
+
+Putting the datasheet together with the hardware measurements:
+
+- The **legacy/v1 layout** is one `DELAY_INT_CFG` word: RX fields in bits 15:0,
+  TX fields in bits 31:16. That is exactly what `mtk_dim_tx()` still uses
+  (`val & RX_MASK; val |= TX_EN; ...` read-modify-write of `pdma.delay_irq`).
+- The **netsys v2/v3 layout** splits these into separate words:
+  `tx_delay_irq = PDMA_BASE+0x2b0` (tx fields) and `rx_delay_irq =
+  PDMA_BASE+0x2c0` (rx fields). So each of those words is *the same 16-bit
+  substructure* (`EN` + `PINT` + `PTIME`) placed in the low half.
+- Therefore `MTK_PDMA_DELAY_RX_RING_SHIFT = 16` and the `val | (val << 16)`
+  idiom are **precisely the "two rings per 32-bit word" packing**: ring 0 in
+  bits 15:0, ring 1 in bits 31:16. Confirmed by the live register reading
+  `0xff01ff01` -> two identical 16-bit halves.
+- The four independent **byte** slots I measured (`0x00000001` / `0x00000100`
+  / `0x00010000` / `0x01000000` all persisting) are then the *raw storage*
+  granularity, not four separate functional ring fields: a 16-bit ring field
+  occupies two bytes, so byte-granular writes to bits 15:0 and 31:16 land in
+  ring 0's and ring 1's fields. Writing `0x00010000` sets only the high byte of
+  ring 1's 16-bit field (PTIME high bits), which is legal but not meaningful.
+- So there is **no evidence of a 4-ring RX delay layout on netsys v3**: the
+  hardware gives you **two** 16-bit RX delay fields per word, and rings 2/3's
+  coalescing is either fixed or shared with 0/1. The earlier "fill all four
+  8-bit slots" idea is **not supported** by the documented bitfields, and is
+  withdrawn.
+
+Net: the upstream `val | (val << RING_SHIFT)` behaviour is correct for what the
+register actually provides; the reviewer's "do rings 2/3 get DIM updates?"
+question is answered as **"the register only has two RX delay fields; rings 2/3
+are not individually programmable through it"** -- a hardware property, not a
+driver oversight.
+
+Artifacts: datasheet PDF saved as `/tmp/mtk_ds.pdf`, extracted text
+`/tmp/mtk_ds.txt` (the `DELAY_INT_CFG` description is around line 71400).
+
+### 982 CORRECTED: dropped the per-ring DIM split (2026-10-05)
+
+The first version of 982 also split `struct dim` per ring. **That was wrong and
+has been reverted**; the committed patch (`546cfa1890`) is narrower.
+
+Why the split was wrong: `rx_delay_irq` (0x6ac0) exposes only **two** 16-bit
+per-ring delay fields (ring 0 in bits 15:0, ring 1 in bits 31:16) -- confirmed
+from the public MT7688 datasheet's `DELAY_INT_CFG` layout and from live
+register reads. Giving four rings four `struct dim` states therefore produces
+**four DIM workers writing a two-field register**, each performing the driver's
+full-word `mtk_w32()`, so they clobber each other's ring field (serialised by
+`dim_lock`, but last-writer-wins on shared storage). The original single
+`eth->rx_dim` is the *correct* model: one writer, both halves programmed from
+one profile.
+
+A masked per-ring write was prototyped (`mtk_m32(RX_MASK << shift, val << shift)`
+for ring 0/1 only, rings >= 2 skipping the write), but it was rejected too:
+rings 2/3 would then own a `dim` that can never do anything, and their
+`dim->state` handling became fiddly -- added complexity for no hardware gain.
+
+Final 982 scope:
+- per-ring `rx_packets`/`rx_bytes`/`rx_events` in `struct mtk_rx_ring`
+  (removes the genuinely shared hot-path cache line; they only feed DIM),
+- `status_lock` serialising the `MTK_INT_STATUS2` read/clear, taken only when
+  the AF bit is already set (so the common path is lock-free),
+- `struct dim` stays global and the DIM register path is unchanged from
+  upstream.
