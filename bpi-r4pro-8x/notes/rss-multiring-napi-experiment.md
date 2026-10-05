@@ -2282,3 +2282,99 @@ Final 982 scope:
   the AF bit is already set (so the common path is lock-free),
 - `struct dim` stays global and the DIM register path is unchanged from
   upstream.
+
+### Upstream / PR / forum sweep (2026-10-05, evening pass)
+
+Note on method: **patchwork.kernel.org and lore.kernel.org are now behind Anubis
+(bot PoW)**, so `curl`/`webfetch` get the challenge page. Used instead: the
+patchwork bot log CSV (`https://netdev.bots.linux.dev/pw-bot.csv`, authoritative
+series list incl. state + last review) and the kernel trees directly via the
+**git smart-HTTP endpoint** (`git ls-remote`/`gh api` on torvalds/linux and
+gregkh/linux), which are not behind Anubis.
+
+**openwrt/openwrt:**
+- main HEAD `87087bec5ca`, still **6.18.55**; **100 commits** past our `.54` base
+  (`4fed8d3c79`). The only commits in our IP since the base are the `.55` bump
+  itself plus `e7eaa9851ff generic: backport spi-qpic-snand stale ECC pointer
+  fix` -- **nothing touching mtk_eth_soc / RSS / jumbo / mxl862xx**. No reason to
+  move off `.54`.
+- **NEW relevant PR #25635** "kernel: netfilter: use the route device for
+  flowtable neighbour xmit" (OPEN, 2026-10-05): since 6.18.45 (`b5964aac51e0`
+  "consolidate xmit path" + `2bdc536c9da7` "always set route tuple out ifindex")
+  the flowtable transmits `FLOW_OFFLOAD_XMIT_NEIGH` flows on the device stored in
+  the tuple instead of the route device; with fw4's default flowtable (`br-lan`
+  listed, its ports not) path discovery towards a host behind a plain/DSA bridge
+  port records the FDB-selected port and the offload breaks. **Same neighbourhood
+  as #27340** -- relevant to our `flow_offloading=1` (we ship no
+  `/etc/flowtable.conf`, so keep the device list to real ports). Watch.
+- Tracked PRs unchanged, all still OPEN: #25383 (mt7530 stats64/unbind, 10-03),
+  #25247 (mt7530 VLAN, 09-29), #24279 (ramoops, 09-29), #25206/#25058 (MT7530
+  EEE, 25.12 / superseded), #24784 (WED 2.0 WDMA TX hang, 10-03), #25567 (25.12
+  mt76 cherry-picks, 10-03), #25498 (Keenetic KN-3910, 10-01).
+- #21083 "BananaPi BPi-R4 Pro 8X" base: **MERGED 2026-08-24** (updated 10-04 =
+  comment activity only). #24897 4e variant merged 09-28 (already in main `.54`).
+- New device PRs, all out of scope: #25600 Adtran SDG-9000, #25563 JioExtender
+  JE6000/JioRouter, #25489 urant u28, #25506 Zyxel WAX300H, #25580 COMFAST,
+  #25548 Netgear rootfs, #25045 Huastlink, #24108 TP-Link VX830v, #24557 ramips
+  mt7620.
+
+**netdev / upstream:**
+- **Our `980` has LANDED in mainline.** `6f0c2c4f5e71` "net: ethernet:
+  mtk_eth_soc: allocate dummy netdev sooner" -- **Sandeep Haemoon, 2026-09-30**
+  (`Fixes: 656e705243fd`, `Reviewed-by: Simon Horman`, merged by Jakub). Body is
+  exactly our fix: `eth->dummy_dev` + the shared tx/rx NAPI must be created
+  *before* the `register_netdev()` loop, else a netifd-opened netdev hits
+  `mtk_rx_alloc() -> __xdp_rxq_info_reg()` with `dummy_dev == NULL` ("Missing
+  net_device from driver" WARNING, `-ENODEV`), or on v1 SoCs `napi_enable()` on
+  an uninitialised NAPI; error path unwinds via `mtk_unreg_dev()` and cancels
+  `pending_work`.
+  **It is NOT yet in 6.18.y**: the newest `mtk_eth_soc.c` commit on
+  `linux-6.18.y` (HEAD `725bd2f3c8`) is `7254b702e556` "unregister net_devices in
+  case of probe failure" (10-03). The commit has a `Fixes:` tag and targets
+  `net`, so a 6.18.y backport is expected. **Keep our `980` until a 6.18.y
+  carries it, then drop; re-check hunk offsets on each rebase.**
+- Adjacent, also merged upstream: `310d1ac61a4d` "unregister net_devices in case
+  of probe failure" (09-18) -- already backported to 6.18.y (`7254b702e556`).
+- **RSS/LRO series: still v8, no v9.** Patchwork bot log's last entries are
+  **May 08 / May 13** (series `1090658` / `1092106`), state `new`,
+  `changes-requested`. Nothing since; nothing merged. frank's `7.3-rsslro` is the
+  same v8 snapshot (last real commit 2026-09-01, `build.sh/defconfig`).
+- Other recent mediatek netdev traffic is all out of scope: `net: wwan: t9xx`
+  MediaTek WWAN driver (still in review), mt7530 EcoNet EN7528/EN751221, phy
+  EcoNet, `net: dsa: mt7530: fix trapped frame forwarding and egress tagging`
+  (09-22).
+
+**forum.banana-pi.org:** completely idle.
+- #17248 (jumbo): posts=87, last **2026-09-23** (#89 frank: move RSS/LRO to #26071).
+- #26071 (LRO/RSS): posts=18, last **2026-09-04**.
+- #27340 (flowtable corrupts large TCP on r4-pro-8x): posts=20, last 2026-08-13.
+- No new r4pro-8x / RSS / jumbo topics since 09-25 (latest search hits: #27621
+  BE14 wifi 09-29, #23388 BE1900 10-01, #22686 design 10-03 -- all unrelated).
+
+**frank-w:**
+- `openwrt@R4Pro_RSS` unchanged since 2026-09-20 (`1c4bf57a2`, "fix 2 patches for
+  mtk_eth_soc due to mt7981 EEE support added") -- still one commit behind our
+  cancel-before-free ordering fix.
+- kernel `7.3-jumbo` still `f2d6ce7925` (2026-09-08, rings-only realloc);
+  `7.2-jumbo` `bcc06aa67c` (09-07); `7.3-rsslro` `d5891c3bd0` (09-01 build.sh,
+  v8 snapshot). No `7.4-*` branches yet.
+
+**our fork:** `bpi-r4pro-8x-multiring-6.18.54` CI **green** at `f4f8d6579` (the
+squashed 982 commit, run 2026-10-05 15:03Z). Branch 32 commits ahead of main.
+
+**banana (on `.54`):** up 18h36m (rebooted earlier today by the `0x6ac0` guard
+incident), 48.6 C, MACs `...2f:60/61/62` (u-boot `eth1addr=00:0c:43:36:2f:61`
+holds), WAN up `82.131.28.82/22` (DHCP lease changed from `.62`), 4 RSS IRQs
+firing (PDMA RX 0 + RSS RX 1-3 on CPUs 0-3), **0** real warnings/panics -- the
+only dmesg "oops" matches are boot-time `ramoops` lines. Stable.
+
+**ACTION items (updated):**
+1. `980` is now **in mainline** (`6f0c2c4f5e71`) -- drop it as soon as a 6.18.y
+   carries it; keep until then and re-check offsets.
+2. Watch **#25635** (flowtable neighbour xmit) -- same class as #27340, relevant
+   to our `flow_offloading=1`.
+3. RSS/LRO still stalled at v8; nothing to port.
+4. Rebase target: main is on `.55` but nothing relevant landed; `.54` is fine.
+5. Frank's #26071 RSS/LRO discussion still outstanding (idle since 09-04).
+6. #25383 / #25247 only if lan5 (mt7530) gains a real role; #24279 optional for
+   readable panic dumps.
