@@ -2378,3 +2378,102 @@ only dmesg "oops" matches are boot-time `ramoops` lines. Stable.
 5. Frank's #26071 RSS/LRO discussion still outstanding (idle since 09-04).
 6. #25383 / #25247 only if lan5 (mt7530) gains a real role; #24279 optional for
    readable panic dumps.
+
+### Upstream / PR / forum sweep (2026-10-08)
+
+Method unchanged from the 10-05 evening pass: patchwork/lore are behind Anubis,
+so sources are the netdev bot-log CSV (`netdev.bots.linux.dev/pw-bot.csv`) plus
+the kernel trees over git smart-HTTP.
+
+**openwrt/openwrt:**
+- main HEAD `0ab51fb9c13`, still **6.18.55** (stable `linux-6.18.y` is also at
+  **.55**, no `.56` yet); **194 commits** past our `.54` base (`4fed8d3c79`).
+- New main commits in our neighbourhood since 10-05:
+  - `c244bf6e867 mediatek: filogic: rename netdevs on hotplug` -- the preinit
+    hook that applies the label and `openwrt,netdev-name` DT properties only
+    sees netdevs registered before it runs; the SDG-9000 ethernet driver
+    registers its netdevs ~2 s after preinit, so they keep their `ethN` names.
+    Moves the rename into a shared helper and also calls it from a hotplug net
+    rule. **Relevant to the 8x** (our WAN is `eth1` and we rely on netdev
+    naming); picked up automatically if we ever rebase onto current main.
+  - `60043441a00 generic: add LED triggers for SFP module state and faults` --
+    per-cage `present`/`los` LED triggers. Adjacent to our SFP/MxL interest,
+    not needed.
+  - `6b84ce8a513 Adtran SDG-9000`, `4766cee4b3c mt7623 drop fbdev`, `01c0c192c1b
+    rtl8365mb`, `b2a6ce658df pse-pd`, `9824d07c1d5 leds-st1202`: out of scope.
+- **The flowtable issue is now a three-PR cluster** (all OPEN; same class as our
+  #27340 and directly relevant to our `flow_offloading=1`):
+  - **#25679** "kernel: backport the upstream flowtable forward path fix"
+    (10-06): backports `871df5007eda` "flowtable: bail out if forward path
+    cannot be discovered" + `95133a416809` + `3ae37eafd366` (nf v7.3), replacing
+    699. Without it, a flow whose forward path cannot be discovered takes the
+    destination MAC from the neighbour entry without checking its state, so a
+    flow towards a host that does not answer ARP leaves with `00:00:00:00:00:00`
+    and the bridge **floods it to every port**.
+  - **#25635** "kernel: netfilter: use the route device for flowtable neighbour
+    xmit" (10-05): since 6.18.45 the flowtable transmits `XMIT_NEIGH` flows on
+    the tuple device, which breaks fw4's default flowtable for hosts behind a
+    plain/DSA bridge port.
+  - **#25650** "firewall4: refresh flowtable on Wi-Fi netdev add" (10-05): with
+    `flow_offloading_hw=1`, fw4 builds the flowtable `devices` list once at
+    ruleset load (physical lower ports of each zone bridge); adding a Wi-Fi
+    netdev later leaves it stale.
+- Tracked PRs:
+  - **#25383** retitled/narrowed to "generic: backport mt7530 .get_stats64
+    atomic-context fix" (upd 10-07) -- now only the `07d995873960` fix (MIB read
+    under MDIO mutex from atomic context -> poll from delayed work). mt7530 =
+    our `lan5`/mgmt only.
+  - **#25247** retitled "kernel: backport mt7530 VLAN fixes from v7.1" (upd
+    10-07). mt7530 scope.
+  - **#25206** (25.12 MT7530 broken-EEE backport) **CLOSED** 10-06 -- superseded;
+    6.18 already carries the fix.
+  - **#25567** (25.12 mt76 cherry-picks from 6.18.55) **MERGED** 10-07 -- not our
+    area.
+  - Still OPEN: #24279 ramoops (09-29), #25058 MT7530 EEE (09-25), #24784 WED 2.0
+    WDMA TX hang (10-03), #25498 Keenetic KN-3910 (10-01), #25635.
+- #21083 (BPI-R4 Pro 8X base) merged 08-24; #24897 (4e variant) merged 09-28 --
+  both already in main `.54`.
+
+**netdev / upstream:**
+- **RSS/LRO series: still v8, no v9.** Patchwork bot log's last entries remain
+  **May 08 / May 13** (series `1090658`/`1092106`, `changes-requested`). Nothing
+  merged, nothing new. Nothing to port.
+- **Our `980` (dummy netdev) is still NOT in 6.18.y**: newest `mtk_eth_soc.c`
+  commit there is still `7254b702e556` "unregister net_devices in case of probe
+  failure" (10-03). It remains merged in mainline (`6f0c2c4f5e71`, 09-30).
+  **Keep `980` until a 6.18.y carries it, then drop.**
+- Other mediatek netdev traffic unchanged and out of scope (wwan t9xx, mt7530
+  EcoNet, phy EcoNet, dsa mt7530 egress-tagging).
+
+**forum.banana-pi.org:** completely idle.
+- #17248 (jumbo): posts=87, last **2026-09-23**.
+- #26071 (LRO/RSS): posts=18, last **2026-09-04**.
+- #27340 (flowtable): posts=20, last 2026-08-13.
+- No new r4pro-8x / RSS / jumbo topics (latest hits are BE14/BE1900 wifi and
+  design threads).
+
+**frank-w:** unchanged.
+- `openwrt@R4Pro_RSS` still `1c4bf57a2` (2026-09-20) -- one commit behind our
+  cancel-before-free ordering fix.
+- kernel `7.3-jumbo` `f2d6ce7925` (09-08); `7.2-jumbo` `bcc06aa67c` (09-07);
+  `7.3-rsslro` `d5891c3bd0` (09-01, v8 snapshot). No `7.4-*`.
+
+**our fork:** `bpi-r4pro-8x-multiring-6.18.54` CI **green** at `f4f8d6579` (the
+squashed 982 commit); head is the notes-only `37ff1b38d8c`.
+
+**banana (on `.54`):** up 2d23h, 47.7 C, MACs `...2f:60/61/62` (u-boot
+`eth1addr=00:0c:43:36:2f:61` holds), WAN up `82.131.28.82/22`, 4 RSS IRQs firing
+(PDMA RX 0 + RSS RX 1-3 on CPUs 0-3), **0** real warnings/panics. The single
+pstore record (`console-ramoops-0`) is a **clean shutdown** ("procd: -
+shutdown -" -> "reboot: Restarting system"), **no panic/Oops** -- the earlier
+watchdog reset from the `0x6ac0` experiment left no record, as expected. Stable.
+
+**ACTION items (updated):**
+1. `980` in mainline, not yet 6.18.y -- keep; drop when a 6.18.y carries it.
+2. Flowtable cluster **#25679 / #25635 / #25650** -- watch; same class as #27340,
+   relevant to our `flow_offloading=1`.
+3. main `c244bf6e867` (netdev rename on hotplug) -- take on the next rebase.
+4. RSS/LRO still stalled at v8; nothing to port.
+5. #25383 / #25247 narrowed to mt7530-only; only if `lan5` gains a real role.
+   #24279 optional for readable panic dumps.
+6. Frank's #26071 RSS/LRO discussion still outstanding (idle since 09-04).
