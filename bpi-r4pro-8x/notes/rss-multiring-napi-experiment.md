@@ -2477,3 +2477,114 @@ watchdog reset from the `0x6ac0` experiment left no record, as expected. Stable.
 5. #25383 / #25247 narrowed to mt7530-only; only if `lan5` gains a real role.
    #24279 optional for readable panic dumps.
 6. Frank's #26071 RSS/LRO discussion still outstanding (idle since 09-04).
+
+### Upstream / PR / forum sweep (2026-10-12)
+
+**HEADLINE 1 -- our `980` is now backported to 6.18.y.**
+- stable `linux-6.18.y` is at **.56**; its `mtk_eth_soc.c` history now carries
+  `82be3d08de9e` "net: ethernet: mtk_eth_soc: allocate dummy netdev sooner"
+  (2026-10-11, `[ Upstream commit 6f0c2c4f5e71... ]`) -- the backport of the
+  mainline fix that is our `980`.
+- OpenWrt **#25815 "kernel: bump 6.18 to 6.18.56"** (OPEN, 10-11/12, graysky2)
+  will bring it to main: removes 4 upstreamed patches (spinand QE, usb-serial
+  option EG060W, qmi_wwan EG120K, bcm27xx of-overlay) and manually rebases 2
+  (LoongArch vdso, bcmgenet coalescing); nothing mtk_eth_soc in the diff, the
+  dummy-netdev fix is simply part of .56.
+- **=> drop our `980` as soon as we rebase onto a `.56` base; re-check offsets
+  until then.** It is still needed on our current `.54` build.
+
+**HEADLINE 2 -- a big new 8x-specific PR lands in review: #25841.**
+- **#25841 "mediatek: bpi-r4-pro-8x runtime 10G SerDes mux and PHY lane fixes"**
+  (OPEN, 2026-10-12, **str0g**) ports the *vendor BSP's* runtime 10G combo-port
+  handling onto snapshot 6.18. Both combos (WAN on gmac1, lan6 on MxL switch
+  port 13) then select PHY or SFP **at runtime** instead of at boot.
+- It adds `target/linux/mediatek/patches-6.18/` **978-984**:
+  - `978` mtk_eth_soc `mediatek,eth-mux` passive mux for gmac1 (lane from SFP
+    mod-def0) -- port of the SinoVoIP BSP's `999-2708`
+  - `979` DTS mux-bus/ethernet-mux@1 under `&eth` (ch0 phy28, ch1 sfp2)
+  - `980` mxl862xx DSA `mxl862xx,ds-mux` for the LAN side
+  - `981` DTS ds-mux-bus/ds-mux@13, port@13 as lan6 (ch0 sfp1, ch1 phy24)
+  - `982` sfp: share the mod-def0 GPIO with the mux drivers (`999-2754`)
+  - `983` mxl862xx: legacy SerDes PCS on fw < 1.0.84 (else ports 9-16 stay down)
+  - `984` mtk_eth_soc: mii_bus reset callback = 150 ms settle wait (`999-2700`)
+  - also touches `973-...-add-phys`, `472-add-bpi-r4-pro-8x.patch`, `filogic.mk`
+- **CONFLICT with us:** this is a *different* fork (the SinoVoIP vendor BSP --
+  we have no `999-*` patches), but its **978-984 collide with our 979
+  (stable-MAC nvmem), 980 (dummy NAPI) and 982 (RX counters)**. On any rebase
+  onto a main that has #25841 we must renumber ours (978/981/983/984 are free).
+- Functional relevance: this is the "runtime PHY-vs-SFP for the 10G combos"
+  handling we currently do with boot-time overlays/gpio-hog. Worth tracking as a
+  cleaner model, though it is a large PR.
+
+**HEADLINE 3 -- 8x PCIe clock fix: #25751.**
+- **#25751 "mediatek: filogic: keep MT7988 PCIe PEXTP clocks enabled"** (OPEN,
+  2026-10-09, Folkerist): marks `pextp_p0_sel`..`pextp_p3_sel` as
+  `CLK_IS_CRITICAL` so `clk_disable_unused()` no longer gates them while the
+  async `mtk-pcie-gen3` probe is still training links. Adds
+  `256-clk-mediatek-mt7988-topckgen-PEXTP-clocks-are-critical.patch`.
+- **Tested on BananaPi BPI-R4 Pro 8X** (BE14 + two NVMe): 2/6 boots with all
+  PCIe links up -> **16/16** with the patch (no `clk_ignore_unused`); confirmed
+  by EPinci/Diyckstra (10/10 warm, 5/5 cold). This is the topckgen hunk split
+  out of #24569. **Directly relevant to our board** (PCIe/WiFi bring-up races)
+  -- good candidate to take.
+
+**Flowtable cluster (all still OPEN; relevant to our `flow_offloading=1`):**
+- **#25804 "kernel: netfilter: don't bypass the bridge on an unused path"**
+  (10-11): adds `708-...` on top of the pending `699-...`; `nft_dev_forward_path()`
+  stored the output device even when it then discards the path, and since
+  `b5964aac51e0` `XMIT_NEIGH` transmits on it -> routed-to-LAN flows skip the
+  bridge and stall. Mainline unaffected since `871df5007eda`. Tested on a Tenda
+  AC10 (not our board).
+- #25679 "backport the upstream flowtable forward path fix" (upd 10-08),
+  #25635 "use the route device for flowtable neighbour xmit" (10-05),
+  #25650 "firewall4: refresh flowtable on Wi-Fi netdev add" (10-07).
+
+**openwrt/openwrt (main):**
+- main HEAD `c3ac7296bf4`, still **6.18.55**; **453 commits** past our `.54`
+  base (a lot of device merges). Commits touching our IP since 10-08:
+  `244d2f67a5c mediatek: filogic: fix Keenetic phy0 MAC collision with LAN`
+  (the #25450 merge -- MAC-collision class, not our board),
+  `d66966e4803 uboot-mediatek: wl-wnt100x3 ram speed`; **no mtk_eth_soc / RSS /
+  jumbo / mxl862xx changes.**
+- Tracked PRs: #25383 (mt7530 get_stats64, 10-07) OPEN, #25247 (mt7530 VLAN,
+  10-09) OPEN, #24279 ramoops (09-29) OPEN, #24784 WED 2.0 WDMA TX hang (10-11)
+  OPEN, #25498 Keenetic KN-3910 (10-01) OPEN, #25058 MT7530 EEE OPEN, #25206
+  CLOSED (10-06).
+- **#24569 "add Banana Pi BPI-R4 Pro [8x, and 4e]" is still OPEN but stale
+  (last touched 2026-08-09)** -- superseded by #21083 (8x, merged 08-24) and
+  #24897 (4e, merged 09-28). Ignore.
+- Other new PRs out of scope (urant u28, ZBT, Unielec, ASUS RT-BE59, Zyxel
+  EX5512, TP-Link, GL.iNet Brume3, etc.).
+
+**netdev / upstream:** RSS/LRO **still v8, no v9** (bot log last May 13); nothing
+merged. Other mediatek traffic unchanged (wwan t9xx, mt7530 EcoNet, phy EcoNet,
+dsa mt7530 egress tagging).
+
+**forum.banana-pi.org:** our threads idle -- #17248 (87, 09-23), #26071 (18,
+09-04), #27340 (20, 08-13). Only movement is #27621 (BE14 wifi) with a 10-12
+post; unrelated.
+
+**frank-w:** unchanged -- `R4Pro_RSS` `1c4bf57a2` (09-20), `7.3-jumbo`
+`f2d6ce7925` (09-08), `7.2-jumbo` `bcc06aa67c`, `7.3-rsslro` `d5891c3bd0`
+(09-01). No `7.4-*`.
+
+**our fork:** `bpi-r4pro-8x-multiring-6.18.54` CI green at `f4f8d6579`; head is
+the notes-only `d53d77b5fab`.
+
+**banana (on `.54`):** up **7d20h**, 48.3 C, MACs `...2f:60/61/62`, WAN up
+`82.131.28.82/22`, 4 RSS IRQs firing (PDMA RX 0 + RSS RX 1-3), **0** real
+warnings/panics. pstore still holds the single clean-shutdown record (Oct 3).
+Stable, no reboot since Oct 4.
+
+**ACTION items (updated):**
+1. **Drop `980`** once we rebase onto `.56` (via #25815); until then keep it.
+2. **#25841** (8x runtime 10G mux, 978-984) -- **patch-number collision with our
+   979/980/982**; renumber on rebase, and evaluate adopting its runtime
+   PHY-vs-SFP handling for our combo ports.
+3. **#25751** (MT7988 PCIe PEXTP clocks) -- tested on the 8x, fixes PCIe
+   link-training races; strong candidate to add to our branch.
+4. Watch the flowtable cluster (#25804/#25679/#25635/#25650) for our
+   `flow_offloading=1`.
+5. RSS/LRO still stalled at v8.
+6. #25383 / #25247 mt7530-only; #24279 optional ramoops; frank #26071 still
+   outstanding.
